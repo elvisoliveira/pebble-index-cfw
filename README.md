@@ -25,16 +25,18 @@ That is the whole feature set.
 ## How it fits on the ring
 
 The CFW does **not** replace the ring's whole software stack. It is delivered the
-same way the official firmware ships updates — as a signed image pushed over BLE
-through the ring's sync/SUOTA update flow — and it lands in the **primary
-application image slot**, running in place of the factory app. The lower-level
-**failsafe bootloader** underneath is never written, so the ring keeps its
-built-in recovery path at all times.
+same way the official firmware ships updates — as an image pushed over BLE through
+the ring's sync/SUOTA update flow — and it lands in the **primary application image
+slot**, running in place of the factory app. Validation is by image header (magic
++ valid flag) and a CRC32 over the body, not a cryptographic signature. The
+lower-level **failsafe bootloader** underneath is never written, so the ring keeps
+its built-in recovery path at all times.
 
-Going back to the official app needs no tools: **five quick clicks** (or the BLE
-control-point command) invalidate the CFW image, so the next boot drops into the
-failsafe — from which the ring restores the official firmware through the very
-recovery flow it already uses.
+Going back to the official app needs no flashing tools: **five quick clicks** (or
+the BLE control-point command) invalidate the CFW image, so the next boot drops
+into the failsafe. From there the official app restores the stock firmware
+automatically — the same recovery flow the ring already uses when it finds a
+failsafe ring in range.
 
 ## Test kit
 
