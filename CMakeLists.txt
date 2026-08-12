@@ -18,6 +18,9 @@ endfunction(print_include_directories)
 
 add_executable(${PROJECT_NAME}
     ${DIALOG_SDK_SOURCES}
+    # DA14535 system library (SDK 6.0.22 ships this as source, not in da14535.lib):
+    # provides patch_func, my_custom_msg_handlers, lld_force_timeout_refresh, etc.
+    ${DIALOG_SDK_PATH}/sdk/platform/system_library/src/DA14535/system_library_535.c
     # Libraries
     Libraries/RTT/SEGGER_RTT.c
     Libraries/RTT/SEGGER_RTT_printf.c
@@ -31,16 +34,26 @@ add_executable(${PROJECT_NAME}
     src/interrupts.c
     src/user_app.c
     src/ble_handlers.c
-    src/user_app.c
 )
 
 set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -flto -Wall -Werror -g3)
 
+# The ring's SoC is a DA14535. In the SDK the 535 is a VARIANT of the 531: the
+# `#if defined(__DA14535__)` blocks are nested inside `#if defined(__DA14531__)`
+# (e.g. arch.h:119-120), so both defines go together — do not swap one for the
+# other.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<COMPILE_LANGUAGE:C,CXX,ASM>:__DA14531__>
+    $<$<COMPILE_LANGUAGE:C,CXX,ASM>:__DA14535__>
     $<$<COMPILE_LANGUAGE:C,CXX>:GPIO_DRV_PIN_ALLOC_MON_DISABLED>
     -DDEBUG_SEGGER
 )
+
+# Bench-test defines, injected from the command line (e.g. -DKIT_DEFS="KIT_BUTTON_TEST;KIT_FLASH_PINS").
+# Empty for the shipping ring build. See KIT_BUTTON_TEST / KIT_FLASH_PINS in user_app.c.
+if(DEFINED KIT_DEFS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ${KIT_DEFS})
+endif()
 
 target_compile_options(${PROJECT_NAME} PRIVATE
 # C, C++, Assembly
@@ -134,7 +147,10 @@ function(generate_linker_script target_name linker_script_includes linker_script
     set_target_properties(${target_name} PROPERTIES LINK_DEPENDS ${linker_script_input})
 endfunction(generate_linker_script)
 
-generate_linker_script(${PROJECT_NAME} "${LINKER_SCRIPT_INCLUDES}" "-D__DA14531__" "${LINKER_SCRIPT_IN}" "${LINKER_SCRIPT_OUT}")
+# mem_DA14531.lds serves both: the regions come from da1458x_scatter_config.h,
+# which already branches on __DA14535__ (e.g. __SCT_OLD_BLE_BASE 0x07FCDC00 on the
+# 535 vs 0x07FC9C00 on the 531) — that's where the 64 KB come from.
+generate_linker_script(${PROJECT_NAME} "${LINKER_SCRIPT_INCLUDES}" "-D__DA14531__;-D__DA14535__" "${LINKER_SCRIPT_IN}" "${LINKER_SCRIPT_OUT}")
 
 target_link_directories(${PROJECT_NAME} PRIVATE
     ${DIALOG_SDK_PATH}/sdk/gcc
@@ -144,7 +160,7 @@ target_link_directories(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    :da14531.lib
+    :da14535.lib
 )
 
 target_link_options(${PROJECT_NAME} PRIVATE

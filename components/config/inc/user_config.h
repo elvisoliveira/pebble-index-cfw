@@ -78,7 +78,7 @@
  *
  ******************************************
  */
-static const sleep_state_t app_default_sleep_mode = ARCH_SLEEP_OFF;
+static const sleep_state_t app_default_sleep_mode = ARCH_EXT_SLEEP_ON;
 
 /*
  ****************************************************************************************
@@ -92,10 +92,13 @@ static const struct advertise_configuration user_adv_conf = {
     .addr_src = APP_CFG_ADDR_SRC(USER_CFG_ADDRESS_MODE),
 
     /// Minimum interval for advertising
-    .intv_min = MS_TO_BLESLOTS(20),                    // 687.5ms
+    // CFW: relaxed from 20 ms -> 1 s to cut the battery drain of continuous
+    // advertising (~50x fewer transmissions). Still always discoverable/readable;
+    // the counter latency rises to <=2 s per click. (Was: MS_TO_BLESLOTS(20).)
+    .intv_min = MS_TO_BLESLOTS(1000),                  // 1000ms
 
     /// Maximum interval for advertising
-    .intv_max = MS_TO_BLESLOTS(40),                    // 687.5ms
+    .intv_max = MS_TO_BLESLOTS(2000),                  // 2000ms
 
     /**
      *  Advertising channels map:
@@ -180,7 +183,7 @@ static const struct advertise_configuration user_adv_conf = {
  ****************************************************************************************
  */
 /// Device name
-#define USER_DEVICE_NAME        "github.com/stawiski"
+#define USER_DEVICE_NAME        "Pebble Index CFW"
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)

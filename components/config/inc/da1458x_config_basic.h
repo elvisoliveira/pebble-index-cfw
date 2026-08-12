@@ -74,7 +74,19 @@
 /*      -   Enables Debug module and sets code execution in breakpoint in Hardfault and NMI (Watchdog) handlers.*/
 /*          It allows developer to hot attach debugger and get debug information                                */
 /****************************************************************************************************************/
-#define CFG_DEVELOPMENT_DEBUG
+/*
+ * OFF for the ring. As the note above says, this sets "code execution in breakpoint in
+ * Hardfault and NMI (Watchdog) handlers" — and HardFault_HandlerC additionally calls
+ * wdg_freeze() before spinning. On a ring with no debugger attached that is a permanent
+ * hang with the watchdog stopped: a CRC-valid image, so the failsafe never engages and
+ * only SWD gets it back. With this off, HardFault_HandlerC takes the production path
+ * (wdg_reload(1), "force execution of NMI Handler") and our NMI_Handler in
+ * src/interrupts.c drops the ring into the failsafe instead.
+ *
+ * Re-enable it for devkit bring-up, where a debugger IS attached and breaking on a
+ * fault is what you want. Never ship it to the ring.
+ */
+#undef CFG_DEVELOPMENT_DEBUG
 
 /****************************************************************************************************************/
 /* UART Console Print. If CFG_PRINTF is defined, serial interface logging mechanism will be enabled.            */

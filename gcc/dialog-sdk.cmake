@@ -230,7 +230,9 @@ set(DIALOG_SDK_SOURCES
     ${DIALOG_SDK_PATH}/sdk/app_modules/src/app_sec/app_security_task.c
     ${DIALOG_SDK_PATH}/sdk/app_modules/src/app_suotar/app_suotar.c
     ${DIALOG_SDK_PATH}/sdk/app_modules/src/app_suotar/app_suotar_task.c
-    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/system_DA14531.c
-    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/GCC/ivtable_DA14531.S
-    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/GCC/startup_DA14531.S
+    # SoC-specific boot — the ring is a DA14535 (the *_531.c drivers above are
+    # family-wide and serve both; only the boot has its own file for the 535)
+    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/system_DA14535.c
+    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/GCC/ivtable_DA14535.S
+    ${DIALOG_SDK_PATH}/sdk/platform/arch/boot/GCC/startup_DA14535.S
 )

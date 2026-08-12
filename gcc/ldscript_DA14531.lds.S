@@ -267,4 +267,11 @@ SECTIONS
 }
 
 /* Include ROM symbol definitions */
+/* ROM symbols — SoC-specific. The ring is a DA14535; using the 531's .lds here
+ * resolves the symbols at the wrong addresses (or not at all: calc_rcx_freq_ROM,
+ * otp_cs_load_pd_*_ROM and arp_init_table only exist in the 535's). */
+#if defined (__DA14535__)
+INCLUDE da14535_symbols.lds
+#else
 INCLUDE da14531_symbols.lds
+#endif

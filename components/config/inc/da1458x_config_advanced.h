@@ -223,12 +223,13 @@
 /* If the CFG_CUSTOM_SCATTER_FILE flag is undefined, the system knows which blocks to retain based on the       */
 /* default SDK scatter file.                                                                                    */
 /****************************************************************************************************************/
-#undef CFG_CUSTOM_SCATTER_FILE
-#ifdef CFG_CUSTOM_SCATTER_FILE
-    #define CFG_RETAIN_RAM_1_BLOCK
-    #define CFG_RETAIN_RAM_2_BLOCK
-    #define CFG_RETAIN_RAM_3_BLOCK
-#endif
+/* GCC/GNU-ld build: there's no Keil scatter file for the SDK to infer retention
+ * from. Without these defines, arch_turn_peripherals_off() powers RAM1+RAM2 down
+ * in extended sleep and the wake hangs in lockup (vectors/code in dead RAM1). With
+ * all three defined, arch.h clears DO_NOT_RETAIN_ALL_RAM_BLOCKS and everything stays retained. */
+#define CFG_RETAIN_RAM_1_BLOCK
+#define CFG_RETAIN_RAM_2_BLOCK
+#define CFG_RETAIN_RAM_3_BLOCK
 
 /****************************************************************************************************************/
 /* Code location selection.                                                                                     */

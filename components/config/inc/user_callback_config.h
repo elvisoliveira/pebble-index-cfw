@@ -139,9 +139,13 @@ static const struct app_callbacks user_app_callbacks = {
     .app_on_security_req_ind            = NULL,
     .app_on_addr_solved_ind             = NULL,
     .app_on_addr_resolve_failed         = NULL,
+/* The Resolving Address List doesn't exist on the 531-01 or the 535: there the
+ * app_callbacks struct doesn't carry these members (app_callback.h:163). Same guard. */
+#if !defined (__DA14531_01__) && !defined (__DA14535__)
     .app_on_ral_cmp_evt                 = NULL,
     .app_on_ral_size_ind                = NULL,
     .app_on_ral_addr_ind                = NULL,
+#endif
 #endif // (BLE_APP_SEC)
 };
 
@@ -178,17 +182,12 @@ static const struct arch_main_loop_callbacks user_app_main_loop_callbacks = {
     // freeze it, reload it, resume it, etc), when the app_on_ble_powered() is being
     // called and may potentially affect the main loop.
     .app_on_ble_powered     = NULL,
-
-    // By default the watchdog timer is reloaded and resumed when the system wakes up.
-    // The user has to take into account the watchdog timer handling (keep it running,
-    // freeze it, reload it, resume it, etc), when the app_on_system_powered() is being
-    // called and may potentially affect the main loop.
-    .app_on_system_powered  = app_on_system_powered,
-
+    // NULL: SDK reloads the watchdog and uses app_default_sleep_mode on its own.
+    .app_on_system_powered  = NULL,
     .app_before_sleep       = NULL,
-    .app_validate_sleep     = app_validate_sleep,
-    .app_going_to_sleep     = app_going_to_sleep,
-    .app_resume_from_sleep  = app_resume_from_sleep,
+    .app_validate_sleep     = NULL,
+    .app_going_to_sleep     = NULL,
+    .app_resume_from_sleep  = NULL,
 };
 
 //place in this structure the app_<profile>_db_create and app_<profile>_enable functions
