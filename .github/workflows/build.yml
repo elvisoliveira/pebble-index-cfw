@@ -11,21 +11,19 @@ name: build
 on:
   push:
     branches: [master]
-    paths:
-      - 'src/**'
-      - 'include/**'
-      - 'components/**'
-      - 'gcc/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/build.yml'
+    tags: ['v*']            # a version tag (e.g. v0.1.0) cuts a Release — see the Release step
   workflow_dispatch:
   # No `pull_request` trigger on purpose: this is a public repo on a self-hosted
   # runner, so a PR from a fork must never run code on the runner machine.
-  # Builds run on push to master (maintainer-only) and manual dispatch.
+  # Builds run on push to master (maintainer-only), on version tags, and manual dispatch.
+  # No `paths` filter: a tag push carries no changed-file diff, so a paths filter would
+  # skip release builds. The build is ~10 s, so building on every push is fine.
 
 jobs:
   build:
     runs-on: [self-hosted, linux]
+    permissions:
+      contents: write       # needed to create the Release and upload assets on tag builds
     env:
       GCC_TOOLCHAIN_PATH: ${{ vars.GCC_TOOLCHAIN_PATH }}
       DIALOG_SDK_PATH: ${{ vars.DIALOG_SDK_PATH }}
@@ -60,3 +58,19 @@ jobs:
             build/DA14531_App.hex
             build/DA14531_App.elf
             build/DA14531_App.map
+
+      # On a version tag, publish the just-built firmware as a GitHub Release.
+      # create is idempotent (|| true if the release already exists on a re-run);
+      # upload --clobber overwrites the assets so re-running a tag build is safe.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" \
+            build/DA14531_App.bin \
+            build/DA14531_App.hex \
+            build/DA14531_App.elf \
+            build/DA14531_App.map \
+            --clobber
