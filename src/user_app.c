@@ -97,9 +97,18 @@ static void adv_update(uint8_t counter)
  * — proven dead on hardware across two flashes. A click, by contrast, is a wkupct
  * edge that reliably wakes the system (the click counter climbs cleanly), so counting
  * five of them runs on solid ground: enter_failsafe() fires SYNCHRONOUSLY on the 5th
- * click, with no timer in the trigger path. The gap timer only RESETS a partial run,
- * and firing it late is harmless. A GATT Control Point 0x00 write is a second,
- * button-independent path to the same enter_failsafe().
+ * click, with no timer in the trigger path.
+ *
+ * The gap timer that RESETS a partial run (click_reset, an app_easy_timer callback) was
+ * silently dead, so click_run never cleared and every click — however far apart —
+ * accumulated toward 5. Confirmed on the ring: clicks 3 s apart (2x CLICK_WINDOW) still
+ * tripped the failsafe. Root cause was NOT extended sleep: user_modules_config.h had
+ * EXCLUDE_DLG_TIMER=1, which drops app_timer_api_process_handler from app_process_handlers
+ * (app_entry_point.c), so the app_easy_timer expiry message reached TASK_APP with no
+ * handler and the callback never ran. Setting EXCLUDE_DLG_TIMER=0 restores it. (The
+ * press-and-hold that this gesture replaced was likely killed by the same missing handler,
+ * misread as "the timer fires late in sleep".) A GATT Control Point 0x00 write is a
+ * second, button-independent path to the same enter_failsafe().
  */
 #define CLICKS_TO_FAILSAFE 5
 #define CLICK_WINDOW 150   /* 1.5 s in 10 ms units: a longer gap restarts the count */
