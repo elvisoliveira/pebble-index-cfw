@@ -6,7 +6,9 @@ name: build
 # variables so they stay out of this public file:
 #   Settings -> Secrets and variables -> Actions -> Variables
 #     GCC_TOOLCHAIN_PATH   e.g. /usr            (dir whose bin/ has arm-none-eabi-gcc)
-#     DIALOG_SDK_PATH      e.g. /path/to/DA145xx_SDK/6.0.22.1401
+#     DIALOG_SDK_PATH      e.g. tools/DA145xx_SDK/6.0.22.1401
+# A value with no leading "/" is taken as relative to the runner user's $HOME
+# (so it need not hardcode /home/<user>); an absolute path is used as-is.
 
 on:
   push:
@@ -32,12 +34,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check toolchain + SDK
+      - name: Resolve + check toolchain + SDK
         run: |
           test -n "$GCC_TOOLCHAIN_PATH" || { echo "::error::set repo variable GCC_TOOLCHAIN_PATH"; exit 1; }
           test -n "$DIALOG_SDK_PATH"    || { echo "::error::set repo variable DIALOG_SDK_PATH"; exit 1; }
-          test -x "$GCC_TOOLCHAIN_PATH/bin/arm-none-eabi-gcc" || { echo "::error::arm-none-eabi-gcc not under $GCC_TOOLCHAIN_PATH/bin"; exit 1; }
-          test -d "$DIALOG_SDK_PATH/sdk" || { echo "::error::SDK not found at $DIALOG_SDK_PATH"; exit 1; }
+          # HOME-relative values (no leading /) are prefixed with $HOME; absolute ones pass through
+          resolve() { case "$1" in /*) printf '%s' "$1";; *) printf '%s' "$HOME/$1";; esac; }
+          gcc="$(resolve "$GCC_TOOLCHAIN_PATH")"
+          sdk="$(resolve "$DIALOG_SDK_PATH")"
+          test -x "$gcc/bin/arm-none-eabi-gcc" || { echo "::error::arm-none-eabi-gcc not under $gcc/bin"; exit 1; }
+          test -d "$sdk/sdk" || { echo "::error::SDK not found at $sdk"; exit 1; }
+          # re-export the resolved absolute paths for the later steps
+          echo "GCC_TOOLCHAIN_PATH=$gcc" >> "$GITHUB_ENV"
+          echo "DIALOG_SDK_PATH=$sdk"    >> "$GITHUB_ENV"
 
       - name: Configure
         run: |
