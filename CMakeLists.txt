@@ -1,36 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(${DEVICE_NAME} LANGUAGES C CXX ASM)
-
-set(CMAKE_VERBOSE_MAKEFILE ON)
+project(${DEVICE_NAME} LANGUAGES C ASM)
 
 # Include Dialog SDK
 include(${CMAKE_SOURCE_DIR}/gcc/dialog-sdk.cmake)
-
-# Print include directories
-function(print_include_directories)
-    message(STATUS "Include directories: ")
-    get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-    foreach(dir ${dirs})
-        message(STATUS "${dir}")
-    endforeach()
-endfunction(print_include_directories)
 
 add_executable(${PROJECT_NAME}
     ${DIALOG_SDK_SOURCES}
     # DA14535 system library (SDK 6.0.22 ships this as source, not in da14535.lib):
     # provides patch_func, my_custom_msg_handlers, lld_force_timeout_refresh, etc.
     ${DIALOG_SDK_PATH}/sdk/platform/system_library/src/DA14535/system_library_535.c
-    # Libraries
-    Libraries/RTT/SEGGER_RTT.c
-    Libraries/RTT/SEGGER_RTT_printf.c
-    # Components
-    components/debug/src/debug.c
     # Source
     src/user_custs_config.c
     src/user_custs1_def.c
     src/user_periph_setup.c
-    src/printf_gcc.c
     src/interrupts.c
     src/user_app.c
     src/ble_handlers.c
@@ -43,10 +26,9 @@ set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsi
 # (e.g. arch.h:119-120), so both defines go together — do not swap one for the
 # other.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    $<$<COMPILE_LANGUAGE:C,CXX,ASM>:__DA14531__>
-    $<$<COMPILE_LANGUAGE:C,CXX,ASM>:__DA14535__>
-    $<$<COMPILE_LANGUAGE:C,CXX>:GPIO_DRV_PIN_ALLOC_MON_DISABLED>
-    -DDEBUG_SEGGER
+    $<$<COMPILE_LANGUAGE:C,ASM>:__DA14531__>
+    $<$<COMPILE_LANGUAGE:C,ASM>:__DA14535__>
+    $<$<COMPILE_LANGUAGE:C>:GPIO_DRV_PIN_ALLOC_MON_DISABLED>
 )
 
 # Bench-test defines, injected from the command line (e.g. -DKIT_DEFS="KIT_BUTTON_TEST;KIT_FLASH_PINS").
@@ -56,41 +38,16 @@ if(DEFINED KIT_DEFS)
 endif()
 
 target_compile_options(${PROJECT_NAME} PRIVATE
-# C, C++, Assembly
-    $<$<COMPILE_LANGUAGE:C,CXX,ASM>:${GLOBAL_DEBUG_OPTIONS}>
-# C, C++
-    $<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/components/config/inc/da1458x_config_basic.h>
-    $<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/components/config/inc/da1458x_config_advanced.h>
-    $<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/components/config/inc/user_config.h>
+# C, Assembly
+    $<$<COMPILE_LANGUAGE:C,ASM>:${GLOBAL_DEBUG_OPTIONS}>
 # C only
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/components/config/inc/da1458x_config_basic.h>
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/components/config/inc/da1458x_config_advanced.h>
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/components/config/inc/user_config.h>
     $<$<COMPILE_LANGUAGE:C>:-std=gnu11>
     $<$<COMPILE_LANGUAGE:C>:-Wno-int-conversion>
     $<$<COMPILE_LANGUAGE:C>:-Wno-unused-variable>
     $<$<COMPILE_LANGUAGE:C>:-Wno-address>
-    # -fstrict-volatile-bitfields
-    # -Werror
-    # -Wextra
-    # -Wcast-align
-    # -Wconversion
-    # -Wsign-conversion
-    # -Wshadow
-    # -Wlogical-op
-    # -Wsuggest-final-types
-    # -Wsuggest-final-methods
-    # -pedantic
-    # -Wno-expansion-to-defined
-    # -Wno-unused-parameter
-    # -Wno-shadow
-    # -Wno-sign-compare
-# C++ only
-    $<$<COMPILE_LANGUAGE:CXX>:-std=c++11>
-    $<$<COMPILE_LANGUAGE:CXX>:-fms-extensions>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-use-cxa-atexit>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>
-    $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>
-    $<$<COMPILE_LANGUAGE:CXX>:-Wsuggest-override>
 # Assembly
     $<$<COMPILE_LANGUAGE:ASM>:-xassembler-with-cpp>
 )
@@ -98,15 +55,11 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 set(USER_INCLUDES
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/components/config/inc
-    ${CMAKE_SOURCE_DIR}/components/debug/inc
-    ${CMAKE_SOURCE_DIR}/Libraries/RTT
-    # GCC includes
-    # ${GCC_TOOLCHAIN_PATH}/arm-none-eabi/include/
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
-    $<$<COMPILE_LANGUAGE:C,CXX>:${DIALOG_SDK_INCLUDES}>
-    $<$<COMPILE_LANGUAGE:C,CXX>:${USER_INCLUDES}>
+    $<$<COMPILE_LANGUAGE:C>:${DIALOG_SDK_INCLUDES}>
+    $<$<COMPILE_LANGUAGE:C>:${USER_INCLUDES}>
 )
 
 # Linker file needs to be preprocessed
@@ -120,16 +73,9 @@ set(LINKER_SCRIPT_INCLUDES
     -I ${DIALOG_SDK_PATH}/sdk/common_project_files
 )
 
-link_directories(
-    ${CMAKE_SOURCE_DIR}/gcc
-)
-
 function(generate_linker_script target_name linker_script_includes linker_script_defs linker_script_input linker_script_output)
-    # Check the input file
     if(NOT EXISTS ${linker_script_input})
         message(FATAL_ERROR "Linker input file not found.")
-    else()
-        message(STATUS "Found linker input file: ${linker_script_input}")
     endif()
 
     add_custom_command(OUTPUT ${linker_script_output}
@@ -153,9 +99,8 @@ endfunction(generate_linker_script)
 generate_linker_script(${PROJECT_NAME} "${LINKER_SCRIPT_INCLUDES}" "-D__DA14531__;-D__DA14535__" "${LINKER_SCRIPT_IN}" "${LINKER_SCRIPT_OUT}")
 
 target_link_directories(${PROJECT_NAME} PRIVATE
-    ${DIALOG_SDK_PATH}/sdk/gcc
     ${DIALOG_SDK_PATH}/sdk/platform/system_library/output/Keil_5/
-    ${DIALOG_SDK_PATH}/sdk/common_project_files/scatterfiles/
+    # ld resolves the linker script's `INCLUDE da14535_symbols.lds` via -L
     ${DIALOG_SDK_PATH}/sdk/common_project_files/misc/
 )
 
@@ -170,7 +115,6 @@ target_link_options(${PROJECT_NAME} PRIVATE
     "--gc-sections"
     "--specs=nano.specs"
     "--specs=nosys.specs"
-    "-v"
     "-Wl,--no-wchar-size-warning" # Suppress the warning from linking Dialog's system library
     "-Wl,-Map,${PROJECT_NAME}.map" # Produce map file
 )

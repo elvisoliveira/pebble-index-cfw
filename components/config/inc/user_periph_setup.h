@@ -40,10 +40,8 @@
 
 #include "rwip_config.h"
 #include "da1458x_periph_setup.h"
-#include "uart.h"
 #include "gpio.h"
 
 void periph_init(void);
-void GPIO_reservations(void);
 
 #endif // _USER_PERIPH_SETUP_H_

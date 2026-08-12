@@ -37,29 +37,18 @@
 #include <gpio.h>
 #include <arch_wdg.h>
 
-#include <debug.h>
-
-#if DEVELOPMENT_DEBUG
-void GPIO_reservations(void)
-{
-}
-#endif
-
 static void set_pad_functions(void)
 {
     /* Active-low button: without a pull-up the line doesn't return to HIGH on release,
      * the rising edge vanishes and the wkupct one-shot re-arm dies after the 1st click
      * (counter stuck at 1 on the ring). It MUST live here, not in app_on_init: periph_init
      * re-runs on every wake from extended sleep; app_on_init runs only once. Ring: P0_1; in
-     * the KIT_BUTTON_TEST build the button is P0_11. (INPUT_PULLUP/PID_GPIO: gpio.h, already included.) */
+     * the KIT_BUTTON_TEST build the button is P0_11. (INPUT_PULLUP/PID_GPIO: gpio.h, already included.)
+     * P0_1 gets the pull-up in every build: on the ring it IS the button; on the kit it
+     * keeps hibernation-wake polarity auto-detect at "wake on LOW" (jumper P0_1->GND). */
+    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1,  INPUT_PULLUP, PID_GPIO, false);
 #ifdef KIT_BUTTON_TEST
     GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_11, INPUT_PULLUP, PID_GPIO, false);
-    /* KIT hibernation-wake test: keep P0_1 HIGH (pull-up) at hibernation entry so the
-     * clockless-wakeup polarity auto-detects "wake on LOW"; the jumper P0_1->GND is then
-     * the wake edge (mirrors the ring, whose button IS P0_1). Not shipped. */
-    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1,  INPUT_PULLUP, PID_GPIO, false);
-#else
-    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1,  INPUT_PULLUP, PID_GPIO, false);
 #endif
 }
 
@@ -115,16 +104,4 @@ void periph_init(void)
 
     // Enable the pads
     GPIO_set_pad_latch_en(true);
-
-#ifdef DEBUG_SEGGER
-    static bool isSeggerInitialized = false;
-    if (!isSeggerInitialized)
-    {
-        // Set up JLink RTT
-        SEGGER_RTT_Init();
-        DEBUG_PRINT_STRING("periph_init()\r\n");
-
-        isSeggerInitialized = true;
-    }
-#endif
 }
