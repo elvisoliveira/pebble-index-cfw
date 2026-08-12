@@ -18,8 +18,10 @@ on:
       - 'gcc/**'
       - 'CMakeLists.txt'
       - '.github/workflows/build.yml'
-  pull_request:
   workflow_dispatch:
+  # No `pull_request` trigger on purpose: this is a public repo on a self-hosted
+  # runner, so a PR from a fork must never run code on the runner machine.
+  # Builds run on push to master (maintainer-only) and manual dispatch.
 
 jobs:
   build:
