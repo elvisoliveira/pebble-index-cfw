@@ -1,61 +1,54 @@
-# Introduction
+# Pebble Index 01 — CFW
 
-The purpose of this repository is to provide a template to build firmware for DA14531 (Dialog's BLE microcontroller) under CMake with GCC for no code limits. This template integrates SEGGER RTT library for debug `printf`s through SWD using JLink debug probe (no need for hardware serial).
+A minimal alternative firmware for the **Pebble Index 01** smart ring
+(Renesas DA14535 Bluetooth LE SoC).
 
-Author: Mikolaj Stawiski
+> ⚠️ Unofficial, experimental firmware. Not affiliated with Pebble or Core
+> Devices. Flashing it is at your own risk.
 
-# Requirements
+## What it does
 
-To build the template you'll need:
-- CMake >= 3.16 (download from https://cmake.org/download/)
-- GCC for ARM (download from ARM's website https://developer.arm.com/). Recommended `gcc-arm-none-eabi-10-2020-q4-major`.
-- Dialog SDK v.6.0.14.1114 (download from Dialog's website https://www.dialog-semiconductor.com/)
-- make
+It is intentionally *featureless* — a small, working foundation rather than a
+replacement for the official firmware. Out of the box it:
 
-Additionally if you want to run the firmware on the target you'll need:
-- JLink debug probe
-- JLink RTT Viewer (for displaying and logging `printf`s from the target)
-- JLink Ozone debugger >= V3.22a
-- Hardware based on DA14531 chip with SWD (e.g. DA14531 Basic USB kit)
+- Advertises over BLE as **`Pebble Index CFW`**.
+- Counts button presses and exposes the count in its advertising data, so a
+  click is visible from any BLE scanner without connecting.
+- Uses a slow advertising interval to keep battery drain low while staying
+  discoverable.
+- Can hand the ring back to its **failsafe** image — either with a gesture
+  (five quick clicks) or a BLE command — and never overwrites the failsafe
+  bootloader, so the ring stays recoverable.
 
-Having installed CMake, and downloaded and unzipped GCC for ARM and required Dialog SDK, run `build-linux.sh` (Ubuntu/WSL/MacOS) or `build-windows.bat` (Windows) and supply it with paths to GCC and the SDK.
+That is the whole feature set.
 
----
-**NOTE for Windows**
+## Test kit
 
-You'll need `make` to compile the code, for which you might have to install MSYS.
+Before flashing a ring, the firmware is validated on the
+**DA14535-00FXDEVKT-U** (SmartBond DA14535 USB Development Kit). It carries the
+**same SoC as the ring** (DA14535), so BLE and the click counter are exercised
+on real silicon first. On the kit the button is SW2 (P0_11); on the ring it is
+P0_1.
 
----
+## Building
 
-# Running on target
+Requires the `arm-none-eabi` GCC toolchain and the Renesas **SDK 6.0.22.1401**.
+The SDK is proprietary and cannot be redistributed, so it is **not** included
+here — download it from Renesas.
 
-Upon successful setup and build you'll get firmware files under `./build` directory. The firmware will come in few handy formats: binary, hex and elf.
-
-If you want to debug the firmware using Ozone debugger, open `DA14531-debug.jdebug` with Ozone. The script will load the firmware into target's RAM and name your target's registers for nice debugging experience.
-
-# Integration to VSCode
-
-Below is an example of `tasks.json` for VSCode assuming you're on Linux, installed CMake, downloaded and unzipped GCC for ARM to `~/gcc-arm-none-eabi-10-2020-q4-major/`, and downloaded and unzipped Dialog SDK v.6.0.14.1114 to `~/dialog-sdk/`:
+```sh
+./build-linux.sh <GCC_TOOLCHAIN_PATH> <DIALOG_SDK_PATH>
 ```
-{
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build",
-            "type": "shell",
-            "command": "${workspaceFolder}/build-linux.sh",
-            "args": [
-                "~/gcc-arm-none-eabi-10-2020-q4-major/",
-                "~/dialog-sdk"
-            ],
-            "problemMatcher": [
-                "$gcc"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
-        }
-    ]
-}
-```
+
+Output: `build/DA14531_App.bin` (and `.hex`).
+
+## Flashing & recovery
+
+Getting this firmware onto a ring, and the recovery tooling, live in a separate
+repository. *(link TBD)*
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Based on
+[stawiski/da14531-cmake-template](https://github.com/stawiski/da14531-cmake-template).
+The Renesas DA145xx SDK is proprietary and used under its own license.
