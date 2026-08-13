@@ -10,14 +10,11 @@ name: build
 
 on:
   push:
-    branches: [master]
-    tags: ['v*']            # a version tag (e.g. v0.1.0) cuts a Release — see the Release step
-  workflow_dispatch:
-  # No `pull_request` trigger on purpose: this is a public repo on a self-hosted
-  # runner, so a PR from a fork must never run code on the runner machine.
-  # Builds run on push to master (maintainer-only), on version tags, and manual dispatch.
-  # No `paths` filter: a tag push carries no changed-file diff, so a paths filter would
-  # skip release builds. The build is ~10 s, so building on every push is fine.
+    tags: ['v*']            # a version tag (e.g. v0.1.0) builds and cuts a Release
+  workflow_dispatch:         # manual re-run only (does not fire on its own)
+  # Tags only: an ordinary push to master does not build, so the self-hosted runner
+  # is only needed when cutting a release. No `branches` and no `pull_request` on
+  # purpose — a PR from a fork must never run code on the runner machine.
 
 jobs:
   build:
