@@ -60,8 +60,11 @@ Output: `build/DA14531_App.bin` (and `.hex`).
 
 ## Flashing & recovery
 
-Getting this firmware onto a ring, and the recovery tooling, live in a separate
-repository. *(link TBD)*
+The companion app that puts this firmware on a ring is
+[**pebble-index-flasher**](https://github.com/elvisoliveira/pebble-index-flasher) —
+an offline Android app that flashes the CFW, restores the official firmware, and
+drives the failsafe recovery, all over BLE. It bundles the latest CFW release
+(built from this repo) so no PC or cable is needed.
 
 ## License
 
