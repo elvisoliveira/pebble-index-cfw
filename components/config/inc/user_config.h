@@ -92,13 +92,13 @@ static const struct advertise_configuration user_adv_conf = {
     .addr_src = APP_CFG_ADDR_SRC(USER_CFG_ADDRESS_MODE),
 
     /// Minimum interval for advertising
-    // CFW: relaxed from 20 ms -> 1 s to cut the battery drain of continuous
-    // advertising (~50x fewer transmissions). Still always discoverable/readable;
-    // the counter latency rises to <=2 s per click. (Was: MS_TO_BLESLOTS(20).)
-    .intv_min = MS_TO_BLESLOTS(1000),                  // 1000ms
+    // CFW: 300-500 ms. A middle ground between the counter latency (<=0.5 s/click vs
+    // <=2 s before) and the drain of continuous advertising. Was 1000-2000 ms (ring
+    // battery saving); before that 20 ms (SDK default). The ring drain is still open.
+    .intv_min = MS_TO_BLESLOTS(300),                   // 300ms
 
     /// Maximum interval for advertising
-    .intv_max = MS_TO_BLESLOTS(2000),                  // 2000ms
+    .intv_max = MS_TO_BLESLOTS(500),                   // 500ms
 
     /**
      *  Advertising channels map:
