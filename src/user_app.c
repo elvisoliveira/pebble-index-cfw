@@ -98,6 +98,46 @@ static void adv_update(uint8_t counter)
     app_easy_gap_update_adv_data(adv, sizeof(adv), NULL, 0);
 }
 
+#if defined(CONN_PROTO)
+/*
+ * Variant B prototype (bench): persistent connection, no bond. On a click we notify the
+ * counter over the live connection (GATT notification on the Control Point char, which
+ * already carries PERM(NTF)) instead of relying only on the beacon. While connected the
+ * SDK stops advertising; on disconnect the default handler re-advertises connectable, so
+ * the phone reconnects (Android connectGatt(autoConnect=true) needs no bond). conn_idx
+ * 0xFF (== GAP_INVALID_CONIDX) means "not connected".
+ *
+ * The CPU/BLE core is kept awake while connected (arch_disable_sleep) so the wkupct ISR
+ * runs immediately and the notification goes out without the force-wakeup dance — higher
+ * power, to be measured; a production build would instead force-wake the BLE core from the
+ * ISR and keep extended sleep. Extended sleep is restored on disconnect so the idle beacon
+ * stays low-power.
+ */
+#include <prf.h>
+#include <custs1_task.h>
+#include <ke_msg.h>
+#include <user_custs1_def.h>
+
+static uint8_t conn_idx = 0xFF;
+
+void cfw_on_connect(uint8_t conidx) { conn_idx = conidx; arch_disable_sleep(); }
+void cfw_on_disconnect(void)        { conn_idx = 0xFF; arch_set_sleep_mode(ARCH_EXT_SLEEP_ON); }
+
+static void notify_click(uint8_t counter)
+{
+    if (conn_idx == 0xFF) return;
+    struct custs1_val_ntf_ind_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_NTF_REQ,
+        prf_get_task_from_id(TASK_ID_CUSTS1), TASK_APP,
+        custs1_val_ntf_ind_req, 1);
+    req->conidx       = conn_idx;
+    req->notification = true;
+    req->handle       = SVC1_IDX_CONTROL_POINT_VAL;   /* profile maps index -> handle */
+    req->length       = 1;
+    req->value[0]     = counter;
+    ke_msg_send(req);
+}
+#endif
+
 /*
  * Recovery gesture: 5 clicks in quick succession (each gap under CLICK_WINDOW) drop
  * into the failsafe bootloader — the boot then sees an invalid image and enters the
@@ -411,6 +451,9 @@ static void on_wakeup(void)
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
     adv_update(click_n);                /* advertising is continuous -> update the counter */
+#if defined(CONN_PROTO)
+    notify_click(click_n);              /* variant B: also push the click over a live link */
+#endif
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
 

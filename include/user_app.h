@@ -21,4 +21,10 @@ void enter_failsafe(void);
  * failure modes. See ble_handlers.c (CUSTS1_VAL_WRITE_IND). */
 void cfw_ctrl_write(const uint8_t *data, uint16_t len);
 
+#if defined(CONN_PROTO)
+/* Variant B prototype: track the live connection so a click can notify over it. */
+void cfw_on_connect(uint8_t conidx);
+void cfw_on_disconnect(void);
+#endif
+
 #endif // USER_APP_H_

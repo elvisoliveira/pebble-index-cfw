@@ -26,3 +26,19 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid, void const *param, ke_task_id
             break;
     }
 }
+
+#if defined(CONN_PROTO)
+#include <app_default_handlers.h>   /* default_app_on_connection / default_app_on_disconnect */
+
+void user_on_connection(uint8_t connection_idx, struct gapc_connection_req_ind const *param)
+{
+    default_app_on_connection(connection_idx, param);
+    cfw_on_connect(connection_idx);
+}
+
+void user_on_disconnect(struct gapc_disconnect_ind const *param)
+{
+    default_app_on_disconnect(param);
+    cfw_on_disconnect();
+}
+#endif

@@ -272,6 +272,16 @@ static const struct gapm_configuration user_gapm_conf = {
  ****************************************************************************************
  */
 static const struct connection_param_configuration user_connection_param_conf = {
+    // CONN_PROTO (variant B): slow interval + slave latency = little energy with the
+    // connection up. The click notification still goes out on the next connection event
+    // (~250 ms) because the slave wakes when it HAS data; the latency only skips idle
+    // events. time_out > (1+latency)*intv_max*2 = (1+4)*400*2 = 4000 ms. Tuning knob.
+#if defined(CONN_PROTO)
+    .intv_min = MS_TO_DOUBLESLOTS(250),
+    .intv_max = MS_TO_DOUBLESLOTS(400),
+    .latency  = 4,
+    .time_out = MS_TO_TIMERUNITS(5000),
+#else
     /// Connection interval minimum measured in ble double slots (1.25ms)
     /// use the macro MS_TO_DOUBLESLOTS to convert from milliseconds (ms) to double slots
     .intv_min = MS_TO_DOUBLESLOTS(100),
@@ -286,6 +296,7 @@ static const struct connection_param_configuration user_connection_param_conf = 
     /// Supervision timeout measured in timer units (10 ms)
     /// use the macro MS_TO_TIMERUNITS to convert from milliseconds (ms) to timer units
     .time_out = MS_TO_TIMERUNITS(1250),
+#endif
 
     /// Minimum Connection Event Duration measured in ble double slots (1.25ms)
     /// use the macro MS_TO_DOUBLESLOTS to convert from milliseconds (ms) to double slots
