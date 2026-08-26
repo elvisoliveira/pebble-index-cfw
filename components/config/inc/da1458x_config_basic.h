@@ -127,4 +127,14 @@
 /****************************************************************************************************************/
 #undef CFG_POWER_MODE_BYPASS
 
+/****************************************************************************************************************/
+/* CONN_PROTO — variant B is now the PRIMARY click mechanism (this branch): hold a BLE connection and push    */
+/* each click as a GATT notification, instead of only bumping the advertising counter. Defined here so every  */
+/* build (ring and kit) gets it. The beacon is still emitted for discovery/fallback.                          */
+/* CAVEAT (open item): while connected the firmware keeps the CPU/BLE awake (arch_disable_sleep) so the wkupct */
+/* ISR can notify immediately — high power. Before this ships on the ring, replace that with force-waking the */
+/* BLE core from the ISR while keeping extended sleep. Comment this out to fall back to the pure beacon build. */
+/****************************************************************************************************************/
+#define CONN_PROTO
+
 #endif // _DA1458X_CONFIG_BASIC_H_
