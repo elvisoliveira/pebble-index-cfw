@@ -31,27 +31,38 @@
  */
 #define BTN_PORT  GPIO_PORT_0
 
-/* KIT_BUTTON_TEST: bench-only override. The DA14535 USB kit's user button (SW2) is
- * on P0_11 (UM-B-182 §5.11: SW2 -> R16 270R -> P0_11 -> GND, active low), and that
- * pin has no external pull-up — reset default is pull-DOWN, which makes a press
- * invisible. So the test build must also enable the internal pull-up. Never ship
- * this: on the ring the button is P0_1. */
+/* KIT_BUTTON_TEST: bench-only override. Uses P0_7 — a free GPIO exposed on the kit's
+ * MikroBUS socket J3 pin 3 (UM-B-182 Fig.17), with no default function, no LED and no
+ * series resistor. Wire an external momentary button (SPST NO): one lead to P0_7, the
+ * other to GND; the internal pull-up makes a press an active-low edge. This replaces
+ * SW2/P0_11, whose 270R + pull-down default made the wkupct re-arm stick at one click.
+ * Never ship this: on the ring the button is P0_1. */
 #ifdef KIT_BUTTON_TEST
-#define BTN_PIN   GPIO_PIN_11
+#define BTN_PIN   GPIO_PIN_7
 #else
 #define BTN_PIN   GPIO_PIN_1
 #endif
 
-/* wkupct is one-shot; re-arm after every edge, alternating which edge we want. */
+/* wkupct is one-shot; re-arm after every edge, alternating which edge we want.
+ *
+ * Re-arm for the edge OPPOSITE the pin's CURRENT level, read live — never from a
+ * remembered flag. A static "wait for release" flag desyncs from the pin and freezes
+ * the counter: after counting a press, adv_update() takes a few ms; a fast release
+ * during that window passes before we re-arm, so arming for the release edge leaves us
+ * waiting for a HIGH that already happened (the pin is already HIGH) — the next press
+ * (falling edge) is then ignored and clicks stop registering until reboot. Reading the
+ * level at arm time closes that race: if the button is already up we arm for the next
+ * press instead. wait_release just records which edge we armed, for the count logic. */
 static bool wait_release;
 
-static void button_arm(bool release)
+static void button_rearm(void)
 {
+    bool pressed = (GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0);  /* active-low */
     wkupct_enable_irq(WKUPCT_PIN_SELECT(BTN_PORT, BTN_PIN),
                       WKUPCT_PIN_POLARITY(BTN_PORT, BTN_PIN,
-                          release ? WKUPCT_PIN_POLARITY_HIGH : WKUPCT_PIN_POLARITY_LOW),
+                          pressed ? WKUPCT_PIN_POLARITY_HIGH : WKUPCT_PIN_POLARITY_LOW),
                       1, 20);
-    wait_release = release;
+    wait_release = pressed;
 }
 
 /*
@@ -385,8 +396,8 @@ static void click_reset(void)   /* no new click within CLICK_WINDOW => start ove
 
 static void on_wakeup(void)
 {
-    if (wait_release) {                 /* button just came back up */
-        button_arm(false);              /* next edge is the next press */
+    if (wait_release) {                 /* this wake is the release */
+        button_rearm();                 /* pin is up now -> arm for the next press */
         return;
     }
 
@@ -400,7 +411,7 @@ static void on_wakeup(void)
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
     adv_update(click_n);                /* advertising is continuous -> update the counter */
-    button_arm(true);                   /* wait for the release */
+    button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
 
 void app_on_init(void)
@@ -417,7 +428,7 @@ void app_on_init(void)
     bootlog_clear();
 #endif
     wkupct_register_callback(on_wakeup);
-    button_arm(false);
+    button_rearm();                     /* pin idle-high at boot -> arms for the first press */
     /* Bonus recovery net (see POR_HOLD_TICKS): holding the button ~2.5 s POR-resets the
      * chip from any RUNNING state, e.g. if the app ever hangs. Active-low. */
     GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
