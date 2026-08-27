@@ -1,8 +1,8 @@
 # VSCode
 .vscode/
 
-# Build directory
-build/
+# Build directories (build/, build-kit/, build-flash-kit/, ...)
+build*/
 
 # JLink files
 JLinkLog.txt

@@ -51,8 +51,11 @@ Short answer: very unlikely, but yes, it can.
 
 While the CFW is running, every line of code on the ring comes from this
 project. A bad enough bug could leave it stuck, and at that point the only way
-back would be SWD, wiring a debugger to the ring's test points. I have not
-tried that yet.
+back would be SWD, wiring a debugger to the ring's test points. That means
+opening the ring, so it stays a last resort, but it is a real path: the boot
+ROM samples a hardware reset pin fixed to `P0_0` before it runs any firmware,
+and on the ring that pin is the flash clock. Holding it high through power-up
+keeps the core in reset, so firmware never runs and the debug port stays open.
 
 That said, there are several safety nets that put the ring back into failsafe
 mode on their own:
@@ -74,8 +77,10 @@ should not be able to do that. Still, that is why this README says
 Before flashing a ring, the firmware is validated on the
 **DA14535-00FXDEVKT-U** (SmartBond DA14535 USB Development Kit). It carries the
 **same SoC as the ring** (DA14535), so BLE and the click counter are exercised
-on real silicon first. On the kit the button is SW2 (P0_11); on the ring it is
-P0_1.
+on real silicon first. On the kit the button is the on-board **SW2 (P0_11)** by
+default; build with `-DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT"` to use an external
+momentary button on **P0_7** (MikroBUS J3 pin 3 to GND) instead. On the ring the
+button is P0_1.
 
 ## Building
 
@@ -98,6 +103,17 @@ failsafe mode, all over BLE. It does not restore the stock firmware; the
 official Pebble app does that once the ring is in failsafe mode. It bundles
 the latest CFW release built from this repo, so no PC, cable or internet is
 needed.
+
+## Documentation
+
+The [project wiki](https://github.com/elvisoliveira/pebble-index-cfw/wiki) documents the
+ring itself: the [hardware](https://github.com/elvisoliveira/pebble-index-cfw/wiki/Inside-the-ring)
+(chip, memory, pins, debug pads) and
+[how it boots](https://github.com/elvisoliveira/pebble-index-cfw/wiki/How-the-ring-boots)
+(the failsafe, image validation, and the ways back to it).
+
+How firmware is actually written over Bluetooth is documented in the
+[flasher wiki](https://github.com/elvisoliveira/pebble-index-flasher/wiki).
 
 ## License
 

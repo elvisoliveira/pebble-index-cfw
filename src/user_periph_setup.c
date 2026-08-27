@@ -1,34 +1,4 @@
-/**
- ****************************************************************************************
- *
- * @file user_periph_setup.c
- *
- * @brief Peripherals setup and initialization.
- *
- * Copyright (c) 2015-2019 Dialog Semiconductor. All rights reserved.
- *
- * This software ("Software") is owned by Dialog Semiconductor.
- *
- * By using this Software you agree that Dialog Semiconductor retains all
- * intellectual property and proprietary rights in and to this Software and any
- * use, reproduction, disclosure or distribution of the Software without express
- * written permission or a license agreement from Dialog Semiconductor is
- * strictly prohibited. This Software is solely for use on or in conjunction
- * with Dialog Semiconductor products.
- *
- * EXCEPT AS OTHERWISE PROVIDED IN A LICENSE AGREEMENT BETWEEN THE PARTIES, THE
- * SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. EXCEPT AS OTHERWISE
- * PROVIDED IN A LICENSE AGREEMENT BETWEEN THE PARTIES, IN NO EVENT SHALL
- * DIALOG SEMICONDUCTOR BE LIABLE FOR ANY DIRECT, SPECIAL, INDIRECT, INCIDENTAL,
- * OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF
- * USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- * OF THE SOFTWARE.
- *
- ****************************************************************************************
- */
+/* Peripherals setup and initialization (from the Dialog SDK template). */
 #include <user_periph_setup.h>
 #include <datasheet.h>
 #include <system_library.h>
@@ -36,20 +6,16 @@
 #include <syscntl.h>
 #include <gpio.h>
 #include <arch_wdg.h>
+#include <board_config.h>   /* BTN_PORT/BTN_PIN — ring vs kit (TARGET_KIT) */
 
 static void set_pad_functions(void)
 {
-    /* Active-low button: without a pull-up the line doesn't return to HIGH on release,
-     * the rising edge vanishes and the wkupct one-shot re-arm dies after the 1st click
-     * (counter stuck at 1 on the ring). It MUST live here, not in app_on_init: periph_init
-     * re-runs on every wake from extended sleep; app_on_init runs only once. Ring: P0_1; in
-     * the KIT_BUTTON_TEST build the button is P0_11. (INPUT_PULLUP/PID_GPIO: gpio.h, already included.)
-     * P0_1 gets the pull-up in every build: on the ring it IS the button; on the kit it
-     * keeps hibernation-wake polarity auto-detect at "wake on LOW" (jumper P0_1->GND). */
-    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_1,  INPUT_PULLUP, PID_GPIO, false);
-#ifdef KIT_BUTTON_TEST
-    GPIO_ConfigurePin(GPIO_PORT_0, GPIO_PIN_11, INPUT_PULLUP, PID_GPIO, false);
-#endif
+    /* Active-low button pull-up (BTN_PIN from board_config.h).
+     * Without it the line doesn't return to HIGH on release, the rising edge vanishes,
+     * and the wkupct one-shot re-arm dies after the 1st click. It MUST live here, not in
+     * app_on_init: periph_init re-runs on every wake from extended sleep; app_on_init runs
+     * only once. */
+    GPIO_ConfigurePin(BTN_PORT, BTN_PIN, INPUT_PULLUP, PID_GPIO, false);
 }
 
 void periph_init(void)
@@ -68,7 +34,7 @@ void periph_init(void)
     wdg_reload(WATCHDOG_DEFAULT_PERIOD);
     wdg_resume();
 
-    // Disable HW RST on P0_0
+    /* P0_0 is SPI on both boards, not HW reset. */
     GPIO_Disable_HW_Reset();
 
     /*
@@ -96,12 +62,7 @@ void periph_init(void)
         syscntl_dcdc_turn_on_in_boost(SYSCNTL_DCDC_LEVEL_3V0);
     }
 
-    // ROM patch
     patch_func();
-
-    // Set pad functionality
     set_pad_functions();
-
-    // Enable the pads
     GPIO_set_pad_latch_en(true);
 }
