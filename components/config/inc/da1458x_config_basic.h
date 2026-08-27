@@ -33,6 +33,15 @@
 #ifndef _DA1458X_CONFIG_BASIC_H_
 #define _DA1458X_CONFIG_BASIC_H_
 
+/* WITH_CTRL_POINT — the GATT Control Point recovery (write 0x00 -> enter_failsafe), a
+ * button-independent path back to the failsafe. ON by default on BOTH builds so the kit
+ * validates the recovery path (it is SoC-independent software). Handler in cfw_ctrl.c; the
+ * CUSTS1 profile is gated on this in user_profiles_config.h / user_modules_config.h — which
+ * this header includes just below, so the define MUST stay above those includes. Comment
+ * out for a lean beacon-only build (drops the whole custom profile); 5 fast clicks still
+ * recover. */
+#define WITH_CTRL_POINT
+
 #include "da1458x_stack_config.h"
 #include "user_profiles_config.h"
 
@@ -47,8 +56,10 @@
 
 /****************************************************************************************************************/
 /* Enables the BLE security functionality in TASK_APP. If not defined BLE security related code is compiled out.*/
+/* CFW: OFF. The click model needs no pairing/bonding — dropping it removes the app_security module and the   */
+/* security callbacks (BLE_APP_SEC gates them in user_callback_config.h).                                      */
 /****************************************************************************************************************/
-#define CFG_APP_SECURITY
+/* #define CFG_APP_SECURITY */
 
 /****************************************************************************************************************/
 /* Enables WatchDog timer.                                                                                      */
@@ -126,15 +137,5 @@
 /*     - CFG_POWER_MODE_BYPASS = Bypass mode                                                                    */
 /****************************************************************************************************************/
 #undef CFG_POWER_MODE_BYPASS
-
-/****************************************************************************************************************/
-/* CONN_PROTO — variant B is now the PRIMARY click mechanism (this branch): hold a BLE connection and push    */
-/* each click as a GATT notification, instead of only bumping the advertising counter. Defined here so every  */
-/* build (ring and kit) gets it. The beacon is still emitted for discovery/fallback.                          */
-/* CAVEAT (open item): while connected the firmware keeps the CPU/BLE awake (arch_disable_sleep) so the wkupct */
-/* ISR can notify immediately — high power. Before this ships on the ring, replace that with force-waking the */
-/* BLE core from the ISR while keeping extended sleep. Comment this out to fall back to the pure beacon build. */
-/****************************************************************************************************************/
-#define CONN_PROTO
 
 #endif // _DA1458X_CONFIG_BASIC_H_

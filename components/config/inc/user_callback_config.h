@@ -54,13 +54,8 @@
  */
 
 static const struct app_callbacks user_app_callbacks = {
-#if defined(CONN_PROTO)
-    .app_on_connection                  = user_on_connection,
-    .app_on_disconnect                  = user_on_disconnect,
-#else
     .app_on_connection                  = default_app_on_connection,
     .app_on_disconnect                  = default_app_on_disconnect,
-#endif
     .app_on_update_params_rejected      = NULL,
     .app_on_update_params_complete      = NULL,
     .app_on_set_dev_config_complete     = default_app_on_set_dev_config_complete,

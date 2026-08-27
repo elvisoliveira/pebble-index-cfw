@@ -17,6 +17,7 @@ add_executable(${PROJECT_NAME}
     src/interrupts.c
     src/user_app.c
     src/ble_handlers.c
+    src/cfw_ctrl.c
 )
 
 set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -flto -Wall -Werror -g3)
@@ -31,8 +32,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<COMPILE_LANGUAGE:C>:GPIO_DRV_PIN_ALLOC_MON_DISABLED>
 )
 
-# Bench-test defines, injected from the command line (e.g. -DKIT_DEFS="KIT_BUTTON_TEST;KIT_FLASH_PINS").
-# Empty for the shipping ring build. See KIT_BUTTON_TEST / KIT_FLASH_PINS in user_app.c.
+# Board/feature defines, injected from the command line. Empty = the shipping RING build.
+# For the DA14535 devkit bench build:  -DKIT_DEFS=TARGET_KIT   (button P0_7 + kit flash pins).
+# See board_config.h (TARGET_KIT) and da1458x_config_basic.h (WITH_CTRL_POINT, default on).
 if(DEFINED KIT_DEFS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ${KIT_DEFS})
 endif()

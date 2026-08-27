@@ -75,7 +75,11 @@
 #define EXCLUDE_DLG_FINDL           (1)
 #define EXCLUDE_DLG_FINDT           (1)
 #define EXCLUDE_DLG_SUOTAR          (1)
+#if defined(WITH_CTRL_POINT)                /* the custom server carries the Control Point */
 #define EXCLUDE_DLG_CUSTS1          (0)
+#else
+#define EXCLUDE_DLG_CUSTS1          (1)
+#endif
 #define EXCLUDE_DLG_CUSTS2          (1)
 
 /// @} APP
