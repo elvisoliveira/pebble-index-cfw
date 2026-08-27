@@ -10,7 +10,7 @@
 
 static void set_pad_functions(void)
 {
-    /* Active-low button pull-up (BTN_PIN: ring P0_1, kit P0_7 — from board_config.h).
+    /* Active-low button pull-up (BTN_PIN from board_config.h).
      * Without it the line doesn't return to HIGH on release, the rising edge vanishes,
      * and the wkupct one-shot re-arm dies after the 1st click. It MUST live here, not in
      * app_on_init: periph_init re-runs on every wake from extended sleep; app_on_init runs

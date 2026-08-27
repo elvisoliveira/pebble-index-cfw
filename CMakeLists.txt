@@ -33,7 +33,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 # Board/feature defines, injected from the command line. Empty = the shipping RING build.
-# For the DA14535 devkit bench build:  -DKIT_DEFS=TARGET_KIT   (button P0_7 + kit flash pins).
+# For the DA14535 devkit bench build:  -DKIT_DEFS=TARGET_KIT   (SW2 button P0_11 + kit flash pins).
+# Add KIT_BTN_EXT for an external button on P0_7:  -DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT".
 # See board_config.h (TARGET_KIT) and da1458x_config_basic.h (WITH_CTRL_POINT, default on).
 if(DEFINED KIT_DEFS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ${KIT_DEFS})

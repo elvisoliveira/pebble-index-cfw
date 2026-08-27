@@ -30,10 +30,10 @@
 #include <string.h>
 
 /*
- * Button (BTN_PIN/BTN_PORT come from board_config.h: ring P0_1, kit P0_7). The wkupct
- * is active-low, 1 event, 20 ms debounce. Button and flash CS are separate pins (the
- * ring is FCGQFN24, CS=P0_9), so the release-triggered gesture is a conservative
- * choice, not a necessity.
+ * Button: BTN_PIN/BTN_PORT come from board_config.h — the one source of truth for the
+ * per-board pinout. The wkupct is active-low, 1 event, 20 ms debounce. Button and
+ * flash CS are separate pins on both boards, so the release-triggered gesture is a
+ * conservative choice, not a necessity.
  *
  * wkupct is one-shot; re-arm after every edge, for the edge OPPOSITE the pin's
  * CURRENT level, read live — never from a remembered flag. A static "wait for
@@ -242,8 +242,8 @@ static void flash_on(void)
     }
 }
 
-/* Release the flash pins. Button (P0_1) and flash CS (P0_9) are separate on the real
- * pinout, so there is nothing to hand back — this only deasserts CS.
+/* Release the flash pins. Button and flash CS are separate pins on both boards (see
+ * board_config.h), so there is nothing to hand back — this only deasserts CS.
  *
  * ponytail: the ring's own firmware also parks the flash in deep power-down here
  * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not, because the

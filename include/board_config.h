@@ -9,7 +9,9 @@
  * CFW is shared between the two boards.
  *
  *                      ring (default)          renesas kit (TARGET_KIT)
- *   button             P0_1                    P0_7  (MikroBUS J3 pin 3, external btn->GND)
+ *   button             P0_1                    P0_11 = SW2 on-board (default), or P0_7
+ *                                              external (MikroBUS J3 pin 3, btn->GND) with
+ *                                              -DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT"
  *   flash CS/CLK/DO/DI  P0_9/P0_0/P0_6/P0_11    P0_1/P0_4/P0_0/P0_3 (the kit's own AT25XE021A)
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
  *
@@ -22,7 +24,16 @@
 #define FLASH_PORT   GPIO_PORT_0
 
 #ifdef TARGET_KIT
-    #define BTN_PIN        GPIO_PIN_7
+    /* SW2 (270R to GND, no external pull-up, pad reset default pull-DOWN) is the default:
+     * with INPUT_PULLUP on BTN_PIN it counts clicks 1:1 (bench-validated 2026-08-27).
+     * KIT_BTN_EXT swaps in a ring-like external button on P0_7 — a deliberate option,
+     * not a fix; SW2 was never at fault. (The "counter stuck at 1 click" that once showed
+     * up on the kit was the wkupct re-arm race, fixed in a541992, independent of the pin.) */
+    #ifdef KIT_BTN_EXT
+        #define BTN_PIN    GPIO_PIN_7   /* external momentary btn, MikroBUS J3 pin 3 -> GND */
+    #else
+        #define BTN_PIN    GPIO_PIN_11  /* SW2, the kit's on-board user button (default) */
+    #endif
     #define FLASH_EN_PIN   GPIO_PIN_1   /* CS   */
     #define FLASH_CLK_PIN  GPIO_PIN_4   /* CLK  */
     #define FLASH_DO_PIN   GPIO_PIN_0   /* MOSI */
