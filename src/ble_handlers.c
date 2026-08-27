@@ -1,10 +1,6 @@
 #include "ble_handlers.h"
 
-#include <da1458x_config_basic.h>
-#include <da1458x_config_advanced.h>
-#include <user_config.h>
 #include <rwip_config.h>
-#include <ke_msg.h>
 
 #if defined(WITH_CTRL_POINT)
 #include <custs1.h>

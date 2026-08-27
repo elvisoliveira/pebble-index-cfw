@@ -1,14 +1,23 @@
 /*
  * Featureless Pebble Index CFW — this file is the whole app.
- * Each button press bumps a counter in the advertisement; the phone reads
- * "counter changed" as one click. Dev company id 0xFFFF (the phone side matches by
- * that + the fixed address). Advertising is continuous at a slow interval (~1-2 s, set
- * in user_config.h) — enough battery on a coin cell for years, with the click always
- * reliable. (Deeper idle modes were tried; see the note by POR_HOLD_TICKS.)
+ *
+ * Each button press bumps a counter in the advertisement; the phone reads "counter
+ * changed" as one click (it matches on dev company id 0xFFFF + the fixed address).
+ * Model: BURST-FROM-SLEEP — silent when idle (extended sleep, radio off, the wkupct
+ * is the only wake source); each click fires a short, FAST advertising burst carrying
+ * the new counter, then the device idles again.
+ *
+ * History: the previous stable model was CONTINUOUS advertising at a slow interval
+ * (~1-2 s) — years on a coin cell (self-discharge dominates) with the click always
+ * reliable. Deeper idle modes (advertise-on-click bursts, hibernation, an
+ * extended-sleep toggle) had all gone flaky before: the SDK/ROM sleep<->advertising
+ * state machine is non-deterministic on this part, and the click is the whole feature.
+ * The burst model is the retry of that idea — the known fragile area on this SoC — so
+ * it is being validated on the kit first.
+ *
+ * Recovery nets: 5 fast clicks -> failsafe bootloader; hold ~2.5 s -> hardware POR
+ * reset; GATT Control Point write 0x00 -> failsafe (button-independent, cfw_ctrl.c).
  */
-#include <da1458x_config_basic.h>
-#include <da1458x_config_advanced.h>
-#include <user_config.h>
 #include <rwip_config.h>
 #include <board_config.h>   /* BTN_PIN/PORT + FLASH_* pins — ring vs kit (TARGET_KIT) */
 #include <user_app.h>
@@ -24,22 +33,21 @@
 #include <string.h>
 
 /*
- * Button (BTN_PIN/BTN_PORT come from board_config.h: ring P0_1, kit P0_7). The wkupct is
- * active-low, 1 event, 20 ms debounce. Button and the flash CS are separate pins (the
- * ring is FCGQFN24, CS=P0_9), so the release-triggered gesture is a conservative choice,
- * not a necessity.
- */
-
-/* wkupct is one-shot; re-arm after every edge, alternating which edge we want.
+ * Button (BTN_PIN/BTN_PORT come from board_config.h: ring P0_1, kit P0_7). The wkupct
+ * is active-low, 1 event, 20 ms debounce. Button and flash CS are separate pins (the
+ * ring is FCGQFN24, CS=P0_9), so the release-triggered gesture is a conservative
+ * choice, not a necessity.
  *
- * Re-arm for the edge OPPOSITE the pin's CURRENT level, read live — never from a
- * remembered flag. A static "wait for release" flag desyncs from the pin and freezes
- * the counter: after counting a press, adv_update() takes a few ms; a fast release
- * during that window passes before we re-arm, so arming for the release edge leaves us
- * waiting for a HIGH that already happened (the pin is already HIGH) — the next press
- * (falling edge) is then ignored and clicks stop registering until reboot. Reading the
- * level at arm time closes that race: if the button is already up we arm for the next
- * press instead. wait_release just records which edge we armed, for the count logic. */
+ * wkupct is one-shot; re-arm after every edge, for the edge OPPOSITE the pin's
+ * CURRENT level, read live — never from a remembered flag. A static "wait for
+ * release" flag desyncs from the pin and freezes the counter: after counting a press,
+ * adv_update() takes a few ms; a fast release during that window passes before we
+ * re-arm, so arming for the release edge leaves us waiting for a HIGH that already
+ * happened — the next press (falling edge) is then ignored and clicks stop
+ * registering until reboot. Reading the level at arm time closes that race: if the
+ * button is already up we arm for the next press instead. wait_release just records
+ * which edge we armed, for the count logic.
+ */
 static bool wait_release;
 
 static void button_rearm(void)
@@ -53,15 +61,12 @@ static void button_rearm(void)
 }
 
 /*
- * Advertisement = manufacturer-specific counter + the device name, rebuilt in full
- * on every click.
- *
- * app_easy_gap_update_adv_data() REPLACES the advertising data and the scan
- * response wholesale (SDK app.c:543-562), and the SDK only inserts the device name
- * when advertising STARTS (app.c:387-395). Pushing just the 5-byte counter blob
- * therefore dropped the name on the very first click — the ring stayed findable by
- * address but vanished from any name-based scan. So we emit both AD structures
- * together every time.
+ * Advertisement = manufacturer-specific counter + the device name, rebuilt in full on
+ * every click. app_easy_gap_update_adv_data() REPLACES the adv data and scan response
+ * wholesale (SDK app.c:543-562), and the SDK only inserts the device name when
+ * advertising STARTS (app.c:387-395) — pushing just the 5-byte counter blob dropped
+ * the name on the first click (still findable by address, gone from name-based
+ * scans). So we emit both AD structures together every time.
  */
 #define ADV_MFR_LEN  5   /* len + type + company(2) + counter */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
@@ -89,16 +94,7 @@ static void adv_update(uint8_t counter)
     app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
 }
 
-/*
- * BURST-FROM-SLEEP experiment (kit): the ring is SILENT when idle (extended sleep, radio
- * off — the wkupct is the only wake source), and each click fires a short, FAST
- * advertising burst that carries the new counter, then the device idles again. This is
- * the battery+responsive model the beacon can't give (continuous advertising is what the
- * beacon trades for simplicity). Known to be the fragile area on this SoC (the SDK/ROM
- * sleep<->advertising cycle), so it is being validated on the kit first.
- *
- * BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each).
- */
+/* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each). */
 #define BURST_TU  MS_TO_TIMERUNITS(3000)
 static bool advertising;
 
@@ -112,8 +108,8 @@ static void adv_burst(uint8_t counter)
     advertising = true;
 }
 
-/* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device sleeps
- * until the next button press. */
+/* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device
+ * sleeps until the next button press. */
 void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
@@ -121,8 +117,8 @@ void user_on_adv_undirect_complete(uint8_t status)
     arch_set_sleep_mode(app_default_sleep_mode);
 }
 
-/* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a click
- * during that boot burst updates the counter instead of starting a second one. */
+/* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a
+ * click during that boot burst updates the counter instead of starting a second one. */
 void user_on_set_dev_config_complete(void)
 {
     default_app_on_set_dev_config_complete();
@@ -132,43 +128,34 @@ void user_on_set_dev_config_complete(void)
 /*
  * Recovery gesture: 5 clicks in quick succession (each gap under CLICK_WINDOW) drop
  * into the failsafe bootloader — the boot then sees an invalid image and enters the
- * failsafe (see ../../failsafe-recovery-test).
+ * failsafe (see ../../failsafe-recovery-test). enter_failsafe() fires SYNCHRONOUSLY
+ * on the 5th click, no timer in the trigger path: a click is a wkupct edge that
+ * reliably wakes the system (the counter climbs cleanly). It replaced a
+ * press-and-hold whose detection timer never fired — proven dead on hardware across
+ * two flashes.
  *
- * This replaces a press-and-hold. A hold plays out entirely inside extended sleep,
- * where the timer meant to detect it fired late (after release) and never triggered
- * — proven dead on hardware across two flashes. A click, by contrast, is a wkupct
- * edge that reliably wakes the system (the click counter climbs cleanly), so counting
- * five of them runs on solid ground: enter_failsafe() fires SYNCHRONOUSLY on the 5th
- * click, with no timer in the trigger path.
- *
- * The gap timer that RESETS a partial run (click_reset, an app_easy_timer callback) was
- * silently dead, so click_run never cleared and every click — however far apart —
- * accumulated toward 5. Confirmed on the ring: clicks 3 s apart (2x CLICK_WINDOW) still
- * tripped the failsafe. Root cause was NOT extended sleep: user_modules_config.h had
- * EXCLUDE_DLG_TIMER=1, which drops app_timer_api_process_handler from app_process_handlers
- * (app_entry_point.c), so the app_easy_timer expiry message reached TASK_APP with no
- * handler and the callback never ran. Setting EXCLUDE_DLG_TIMER=0 restores it. (The
- * press-and-hold that this gesture replaced was likely killed by the same missing handler,
- * misread as "the timer fires late in sleep".) A GATT Control Point 0x00 write is a
- * second, button-independent path to the same enter_failsafe().
+ * The gap timer that RESETS a partial run (click_reset, an app_easy_timer callback)
+ * was once silently dead too: clicks 3 s apart (2x CLICK_WINDOW) still accumulated to
+ * 5 and tripped the failsafe on the ring. Root cause was NOT extended sleep:
+ * EXCLUDE_DLG_TIMER=1 dropped app_timer_api_process_handler from
+ * app_process_handlers (app_entry_point.c), so every app_easy_timer expiry reached
+ * TASK_APP with no handler and no callback ever ran. EXCLUDE_DLG_TIMER=0
+ * (user_modules_config.h) restores it — the dead press-and-hold was likely the same
+ * bug, misread as "the timer fires late in sleep".
  */
 #define CLICKS_TO_FAILSAFE 5
 #define CLICK_WINDOW 150   /* 1.5 s in 10 ms units: a longer gap restarts the count */
 
+/* Keep the burst longer than the window, so the gap timer expires during the burst
+ * (device awake), never inside extended sleep. */
+_Static_assert(BURST_TU > CLICK_WINDOW, "BURST_TU must exceed CLICK_WINDOW");
+
 static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
 static uint8_t click_run;   /* consecutive fast clicks so far */
-
-/* Battery: the ring just advertises continuously at a slow interval (~1-2 s, set in
- * user_config.h). That already gives years on a coin cell (self-discharge dominates),
- * with the click ALWAYS reliable. Deeper idle modes (advertise-on-click bursts,
- * hibernation, an extended-sleep toggle) were all tried and all hit the SDK/ROM
- * sleep/advertising state machine being non-deterministic on this part — the click
- * (the whole feature) went flaky. Continuous slow advertising is the stable choice.
- *
- * Bonus recovery net: hold the button ~2.5 s -> hardware POR reset (reboots if the app
- * ever hangs). A tap stays a click; 5 fast taps stay the failsafe. */
-#define POR_HOLD_TICKS 20   /* por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s) */
 static uint8_t click_n;     /* the advertised click counter */
+
+/* POR hold: por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s). */
+#define POR_HOLD_TICKS 20
 
 /*
  * Drop into the failsafe by invalidating the primary image, then resetting.
@@ -192,13 +179,8 @@ static uint8_t click_n;     /* the advertised click counter */
 #define IMG_SIG1      0x51
 #define IMG_VALID     0xAA
 
-/*
- * SPI-flash pins (FLASH_PORT + FLASH_EN/CLK/DO/DI_PIN, plus FLASH_PWR1/2_PIN on the ring)
- * live in board_config.h — read out of the ring's own factory firmware (2026-08-10), and
- * remapped to the kit's own AT25XE021A under TARGET_KIT. On the ring P0_4/P0_3 are the
- * flash power enables (FLASH_HAS_PWR_PINS); on the kit those pins are the SPI CLK/MISO, so
- * there is nothing to power-enable there.
- */
+/* SPI-flash pinout lives in board_config.h — read out of the ring's own factory
+ * firmware (2026-08-10), remapped to the kit's own AT25XE021A under TARGET_KIT. */
 #define FLASH_CHIP_SIZE (256 * 1024)
 
 /* Block-protect bits in the flash status register (SR1). If ANY are set the
@@ -227,13 +209,12 @@ static const spi_flash_cfg_t flash_dev_cfg = { .chip_size = FLASH_CHIP_SIZE };
 
 /* Bring the SPI flash up before a read/program. The featureless app never touches
  * flash except during recovery, so we init on demand instead of at boot (no idle
- * power cost). Must be paired with flash_off() on any path that does NOT reset —
- * otherwise P0_1 stays an SPI chip select and the button stops working. */
+ * power cost). Pair with flash_off() on any path that does NOT reset. */
 static void flash_on(void)
 {
-    /* Power the flash first (ring only — FLASH_HAS_PWR_PINS), then let it settle before
-     * any SPI. On the kit those pins (P0_4/P0_3) ARE the SPI CLK/MISO, so driving them as
-     * GPIO power-enables would break the bus — board_config.h omits FLASH_HAS_PWR_PINS. */
+    /* Power the flash first (ring only — FLASH_HAS_PWR_PINS), then let it settle
+     * before any SPI. On the kit those pins (P0_4/P0_3) ARE the SPI CLK/MISO, so
+     * board_config.h omits FLASH_HAS_PWR_PINS there. */
 #ifdef FLASH_HAS_PWR_PINS
     GPIO_ConfigurePin(FLASH_PORT, FLASH_PWR1_PIN, OUTPUT, PID_GPIO, true);
     GPIO_ConfigurePin(FLASH_PORT, FLASH_PWR2_PIN, OUTPUT, PID_GPIO, true);
@@ -255,20 +236,19 @@ static void flash_on(void)
     arch_asm_delay_us(30);
     /* Conditional block-protection clear. On the kit's AT25XE021A the status
      * register reads 0 and this is a no-op; if the ring's part powers up with
-     * block-protect bits set (a protected part read 0x1C this session) the
-     * failsafe region and image slot are read-only and every recovery write
-     * fails silently. Clearing costs one reversible WRSR(0) — no OTP lock bit,
-     * no address so no opcode overflow — and only when actually protected, so an
-     * already-open flash is never written. WRSR needs its own WREN (unlike the
-     * erase/program helpers, which send it internally). */
+     * block-protect bits set (a protected part read 0x1C this session) every
+     * recovery write fails silently. Clearing costs one reversible WRSR(0) — no OTP
+     * lock bit, no address so no opcode overflow — and only when actually
+     * protected, so an already-open flash is never written. WRSR needs its own WREN
+     * (unlike the erase/program helpers, which send it internally). */
     if (spi_flash_read_status_reg() & FLASH_SR_BP_MASK) {
         spi_flash_set_write_enable();
         spi_flash_write_status_reg(0x00);
     }
 }
 
-/* Release the flash pins. With the real pinout the button (P0_1) and the flash CS
- * (P0_9) are separate, so there is nothing to hand back — this only deasserts CS.
+/* Release the flash pins. Button (P0_1) and flash CS (P0_9) are separate on the real
+ * pinout, so there is nothing to hand back — this only deasserts CS.
  *
  * ponytail: the ring's own firmware also parks the flash in deep power-down here
  * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not, because the
@@ -296,9 +276,6 @@ static void flash_off(void)
  * ponytail: erases BOOTLOG_ADDR on every healthy boot — the failsafe re-marks a
  * slot each boot so the log is never already clean, and this is the same region
  * the stock rewrites on its stable callback (same wear). No skip-if-clean check.
- *
- * Runs on both boards: the ring's flash on TARGET_KIT undefined, the kit's own
- * AT25XE021A on TARGET_KIT (a real flash there too, so the SPI ops complete).
  */
 static void bootlog_clear(void)
 {
@@ -326,10 +303,6 @@ void enter_failsafe(void)
     spi_flash_page_program(&zero, IMAGE_ADDR + VALIDFLAG_OFF, 1);
     platform_reset(0);
 }
-
-/* The GATT control-point handler (write 0x00 -> enter_failsafe) now lives in cfw_ctrl.c,
- * gated by WITH_CTRL_POINT. enter_failsafe() stays here because the 5-click gesture below
- * calls it too. */
 
 static void click_reset(void)   /* no new click within CLICK_WINDOW => start over */
 {
@@ -361,16 +334,17 @@ static void on_wakeup(void)
 void app_on_init(void)
 {
     default_app_on_init();
-    /* Button pull-up now lives in set_pad_functions() (user_periph_setup.c) so it is
-     * re-applied on every wake from extended sleep — app_on_init runs only once, which
-     * is why a boot-only pull-up let the click freeze after the first press. */
-    /* Clear the failsafe boot log once boot is stable, so the CFW does not self-brick
-     * into recovery after 4 boots (the anti-brick contract). Talks to the ring's flash,
-     * or the kit's own AT25XE021A under TARGET_KIT — a real flash on both. */
+    /* Button pull-up lives in set_pad_functions() (user_periph_setup.c) so it is
+     * re-applied on every wake from extended sleep — app_on_init runs only once,
+     * which is why a boot-only pull-up let the click freeze after the first press. */
+    /* Clear the failsafe boot log once boot is stable, so the CFW does not
+     * self-brick into recovery after 4 boots (the anti-brick contract). Talks to the
+     * ring's flash, or the kit's own AT25XE021A under TARGET_KIT. */
     bootlog_clear();
     wkupct_register_callback(on_wakeup);
     button_rearm();                     /* pin idle-high at boot -> arms for the first press */
-    /* Bonus recovery net (see POR_HOLD_TICKS): holding the button ~2.5 s POR-resets the
-     * chip from any RUNNING state, e.g. if the app ever hangs. Active-low. */
+    /* Bonus recovery net: holding the button ~POR_HOLD_TICKS (~2.5 s) POR-resets the
+     * chip from any RUNNING state, e.g. if the app ever hangs. Active-low. A tap
+     * stays a click; 5 fast taps stay the failsafe. */
     GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
 }

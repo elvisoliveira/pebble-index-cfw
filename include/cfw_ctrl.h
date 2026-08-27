@@ -2,7 +2,6 @@
 #define CFW_CTRL_H_
 
 #include <stdint.h>
-#include <da1458x_config_basic.h>   /* WITH_CTRL_POINT */
 
 #if defined(WITH_CTRL_POINT)
 /*
