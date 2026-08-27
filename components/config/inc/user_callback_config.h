@@ -27,13 +27,7 @@ static const struct app_callbacks user_app_callbacks = {
     .app_on_generate_static_random_addr = default_app_generate_static_random_addr,
 };
 
-/*
- * "app_process_catch_rest_cb" symbol handling:
- * - Use #define if "user_catch_rest_hndl" is defined by the user
- * - Use const declaration if "user_catch_rest_hndl" is NULL
- */
 #define app_process_catch_rest_cb       user_catch_rest_hndl
-//static const catch_rest_event_func_t app_process_catch_rest_cb = NULL;
 
 static const struct default_app_operations user_default_app_operations = {
     .default_operation_adv = default_advertise_operation,
@@ -41,12 +35,9 @@ static const struct default_app_operations user_default_app_operations = {
 
 static const struct arch_main_loop_callbacks user_app_main_loop_callbacks = {
     .app_on_init            = app_on_init,
-    // All other hooks NULL: the SDK reloads the watchdog on wake and applies
-    // app_default_sleep_mode on its own.
+    /* Other hooks are NULL; the SDK handles watchdog reload and sleep mode. */
 };
 
-// place here the app_<profile>_db_create/enable functions for SIG profiles the SDK
-// does not already implement (see the SDK's prf_func array)
 static const struct prf_func_callbacks user_prf_funcs[] =
 {
     {TASK_ID_INVALID,    NULL, NULL}   // DO NOT MOVE. Must always be last

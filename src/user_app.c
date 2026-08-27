@@ -7,13 +7,10 @@
  * is the only wake source); each click fires a short, FAST advertising burst carrying
  * the new counter, then the device idles again.
  *
- * History: the previous stable model was CONTINUOUS advertising at a slow interval
- * (~1-2 s) — years on a coin cell (self-discharge dominates) with the click always
- * reliable. Deeper idle modes (advertise-on-click bursts, hibernation, an
- * extended-sleep toggle) had all gone flaky before: the SDK/ROM sleep<->advertising
- * state machine is non-deterministic on this part, and the click is the whole feature.
- * The burst model is the retry of that idea — the known fragile area on this SoC — so
- * it is being validated on the kit first.
+ * Continuous advertising (~1-2 s) was reliable and lasted years because cell
+ * self-discharge dominated. Earlier burst, hibernation and extended-sleep attempts
+ * were flaky in the SDK/ROM sleep<->advertising state machine; this burst model is
+ * therefore validated on the kit first.
  *
  * Recovery nets: 5 fast clicks -> failsafe bootloader; hold ~2.5 s -> hardware POR
  * reset; GATT Control Point write 0x00 -> failsafe (button-independent, cfw_ctrl.c).
@@ -45,19 +42,19 @@
  * re-arm, so arming for the release edge leaves us waiting for a HIGH that already
  * happened — the next press (falling edge) is then ignored and clicks stop
  * registering until reboot. Reading the level at arm time closes that race: if the
- * button is already up we arm for the next press instead. wait_release just records
- * which edge we armed, for the count logic.
+ * button is already up we arm for the next press instead. armed_for_release records
+ * which edge was armed for the count logic.
  */
-static bool wait_release;
+static bool armed_for_release;
 
 static void button_rearm(void)
 {
-    bool pressed = (GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0);  /* active-low */
+    bool pressed = GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0; /* active-low */
     wkupct_enable_irq(WKUPCT_PIN_SELECT(BTN_PORT, BTN_PIN),
                       WKUPCT_PIN_POLARITY(BTN_PORT, BTN_PIN,
                           pressed ? WKUPCT_PIN_POLARITY_HIGH : WKUPCT_PIN_POLARITY_LOW),
                       1, 20);
-    wait_release = pressed;
+    armed_for_release = pressed;
 }
 
 /*
@@ -87,21 +84,19 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
     return ADV_MFR_LEN + ADV_NAME_LEN;
 }
 
-/* Update the counter of a RUNNING advertisement (a click inside an active burst). */
-static void adv_update(uint8_t counter)
-{
-    uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
-    app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
-}
-
 /* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each). */
 #define BURST_TU  MS_TO_TIMERUNITS(3000)
 static bool advertising;
 
-/* Start a fresh timed burst carrying the counter (from idle). Sets the adv data on the
- * active advertise command so the FIRST packet already has the mfr counter + name. */
-static void adv_burst(uint8_t counter)
+static void advertise_click(uint8_t counter)
 {
+    if (advertising) {
+        uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
+        app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
+        return;
+    }
+
+    /* Set the active command before starting, so the first packet is complete. */
     struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
     cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
     app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
@@ -151,8 +146,8 @@ void user_on_set_dev_config_complete(void)
 _Static_assert(BURST_TU > CLICK_WINDOW, "BURST_TU must exceed CLICK_WINDOW");
 
 static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
-static uint8_t click_run;   /* consecutive fast clicks so far */
-static uint8_t click_n;     /* the advertised click counter */
+static uint8_t fast_clicks;
+static uint8_t click_count; /* advertised counter */
 
 /* POR hold: por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s). */
 #define POR_HOLD_TICKS 20
@@ -307,39 +302,36 @@ void enter_failsafe(void)
 static void click_reset(void)   /* no new click within CLICK_WINDOW => start over */
 {
     click_timer = EASY_TIMER_INVALID_TIMER;
-    click_run = 0;
+    fast_clicks = 0;
 }
 
 static void on_wakeup(void)
 {
-    if (wait_release) {                 /* this wake is the release */
+    if (armed_for_release) {            /* this wake is the release */
         button_rearm();                 /* pin is up now -> arm for the next press */
         return;
     }
 
     /* one click */
-    click_n++;
-    if (++click_run >= CLICKS_TO_FAILSAFE) {
-        click_run = 0;
+    click_count++;
+    if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
+        fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
     } else {
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
-    if (advertising) adv_update(click_n);  /* inside a burst -> just refresh the counter */
-    else             adv_burst(click_n);   /* idle -> wake the radio for a new burst */
+    advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
 
 void app_on_init(void)
 {
     default_app_on_init();
-    /* Button pull-up lives in set_pad_functions() (user_periph_setup.c) so it is
-     * re-applied on every wake from extended sleep — app_on_init runs only once,
-     * which is why a boot-only pull-up let the click freeze after the first press. */
-    /* Clear the failsafe boot log once boot is stable, so the CFW does not
-     * self-brick into recovery after 4 boots (the anti-brick contract). Talks to the
-     * ring's flash, or the kit's own AT25XE021A under TARGET_KIT. */
+    /* set_pad_functions() reapplies the pull-up after every extended-sleep wake;
+     * doing it only here froze clicks after the first press. */
+    /* Satisfy the anti-brick contract once boot is stable; TARGET_KIT uses its
+     * AT25XE021A, while the ring uses its mapped flash. */
     bootlog_clear();
     wkupct_register_callback(on_wakeup);
     button_rearm();                     /* pin idle-high at boot -> arms for the first press */

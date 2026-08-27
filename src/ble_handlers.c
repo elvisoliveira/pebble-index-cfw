@@ -15,7 +15,7 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid, void const *param, ke_task_id
     if (msgid == CUSTS1_VAL_WRITE_IND) {
         struct custs1_val_write_ind const *p = (struct custs1_val_write_ind const *)param;
         if (p->handle == SVC1_IDX_CONTROL_POINT_VAL)
-            cfw_ctrl_write(p->value, p->length);   // button-independent path to recovery
+            cfw_ctrl_write(p->value, p->length); /* button-independent recovery */
     }
 #else
     (void)msgid; (void)param;

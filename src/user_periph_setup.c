@@ -34,7 +34,7 @@ void periph_init(void)
     wdg_reload(WATCHDOG_DEFAULT_PERIOD);
     wdg_resume();
 
-    // Disable HW RST on P0_0
+    /* P0_0 is SPI on both boards, not HW reset. */
     GPIO_Disable_HW_Reset();
 
     /*
@@ -62,12 +62,7 @@ void periph_init(void)
         syscntl_dcdc_turn_on_in_boost(SYSCNTL_DCDC_LEVEL_3V0);
     }
 
-    // ROM patch
     patch_func();
-
-    // Set pad functionality
     set_pad_functions();
-
-    // Enable the pads
     GPIO_set_pad_latch_en(true);
 }

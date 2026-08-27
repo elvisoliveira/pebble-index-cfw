@@ -9,8 +9,8 @@
 /* Must stay 0: the click-gap reset (click_reset) uses app_easy_timer, whose expiry
  * is dispatched by app_timer_api_process_handler — and that handler is only added to
  * app_process_handlers when EXCLUDE_DLG_TIMER==0 (app_entry_point.c). With it excluded,
- * every app_easy_timer callback silently never fires, so click_run never reset and normal
- * clicking accumulated into the failsafe gesture. See the recovery-gesture note in user_app.c. */
+ * callbacks silently die, so fast_clicks never resets and ordinary clicks accumulate
+ * into the failsafe gesture. See the recovery-gesture note in user_app.c. */
 #define EXCLUDE_DLG_TIMER           (0)
 #define EXCLUDE_DLG_MSG             (0)
 #define EXCLUDE_DLG_SEC             (1)

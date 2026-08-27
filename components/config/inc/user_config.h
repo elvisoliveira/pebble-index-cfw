@@ -18,15 +18,10 @@
 /* Default sleep mode (ARCH_SLEEP_OFF / ARCH_EXT_SLEEP_ON / ARCH_EXT_SLEEP_OTP_COPY_ON). */
 static const sleep_state_t app_default_sleep_mode = ARCH_EXT_SLEEP_ON;
 
-/*
- * Advertising configuration
- */
 static const struct advertise_configuration user_adv_conf = {
     .addr_src = APP_CFG_ADDR_SRC(USER_CFG_ADDRESS_MODE),
 
-    // BURST experiment: FAST interval so the phone catches the short post-click burst in
-    // well under a second. Power is fine because the burst lasts only BURST_TU and the
-    // device is SILENT (asleep) between bursts.
+    /* Fast enough to catch the short burst; idle is silent. */
     .intv_min = MS_TO_BLESLOTS(40),                    // 40ms
     .intv_max = MS_TO_BLESLOTS(80),                    // 80ms
 
@@ -50,9 +45,6 @@ static const struct advertise_configuration user_adv_conf = {
 #define USER_DEVICE_NAME        "Pebble Index CFW"
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)
 
-/*
- * GAPM configuration
- */
 static const struct gapm_configuration user_gapm_conf = {
     .role = GAP_ROLE_PERIPHERAL,
 
@@ -82,9 +74,6 @@ static const struct gapm_configuration user_gapm_conf = {
     .max_txtime = 0,
 };
 
-/*
- * Parameter update configuration
- */
 static const struct connection_param_configuration user_connection_param_conf = {
     /// Connection interval min/max in ble double slots (1.25ms each)
     .intv_min = MS_TO_DOUBLESLOTS(100),
@@ -101,9 +90,6 @@ static const struct connection_param_configuration user_connection_param_conf = 
     .ce_len_max = MS_TO_DOUBLESLOTS(0),
 };
 
-/*
- * Default handlers configuration (applies only for app_default_handlers.c)
- */
 static const struct default_handlers_configuration  user_default_hnd_conf = {
     // BURST experiment: advertise WITH_TIMEOUT (not DEF_ADV_FOREVER) so each burst
     // auto-stops and the device idles/sleeps. The boot burst uses advertise_period;
