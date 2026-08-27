@@ -92,13 +92,13 @@ static const struct advertise_configuration user_adv_conf = {
     .addr_src = APP_CFG_ADDR_SRC(USER_CFG_ADDRESS_MODE),
 
     /// Minimum interval for advertising
-    // CFW: 300-500 ms. A middle ground between the counter latency (<=0.5 s/click vs
-    // <=2 s before) and the drain of continuous advertising. Was 1000-2000 ms (ring
-    // battery saving); before that 20 ms (SDK default). The ring drain is still open.
-    .intv_min = MS_TO_BLESLOTS(300),                   // 300ms
+    // BURST experiment: FAST interval so the phone catches the short post-click burst in
+    // well under a second. Power is fine because the burst lasts only BURST_TU and the
+    // device is SILENT (asleep) between bursts.
+    .intv_min = MS_TO_BLESLOTS(40),                    // 40ms
 
     /// Maximum interval for advertising
-    .intv_max = MS_TO_BLESLOTS(500),                   // 500ms
+    .intv_max = MS_TO_BLESLOTS(80),                    // 80ms
 
     /**
      *  Advertising channels map:
@@ -308,12 +308,13 @@ static const struct default_handlers_configuration  user_default_hnd_conf = {
     // Possible values:
     //  - DEF_ADV_FOREVER
     //  - DEF_ADV_WITH_TIMEOUT
-    .adv_scenario = DEF_ADV_FOREVER,
+    // BURST experiment: advertise WITH_TIMEOUT so each burst auto-stops and the device
+    // idles/sleeps. The boot burst uses advertise_period; per-click bursts use BURST_TU
+    // (user_app.c). Keep the two in sync.
+    .adv_scenario = DEF_ADV_WITH_TIMEOUT,
 
-    // Configure the advertise period in case of DEF_ADV_WITH_TIMEOUT.
-    // It is measured in timer units (3 min). Use MS_TO_TIMERUNITS macro to convert
-    // from milliseconds (ms) to timer units.
-    .advertise_period = MS_TO_TIMERUNITS(180000),
+    // Boot burst length (timer units, 10 ms each). Matches BURST_TU in user_app.c.
+    .advertise_period = MS_TO_TIMERUNITS(3000),
 
     // Configure the security start operation of the default handlers
     // if the security is enabled (CFG_APP_SECURITY)

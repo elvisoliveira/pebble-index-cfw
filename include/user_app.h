@@ -14,4 +14,9 @@ void app_on_init(void);
  * control point (cfw_ctrl.c, WITH_CTRL_POINT). */
 void enter_failsafe(void);
 
+/* Burst-from-sleep advertising: config-complete tracks the boot burst; adv-complete goes
+ * idle. Wired in user_callback_config.h. */
+void user_on_set_dev_config_complete(void);
+void user_on_adv_undirect_complete(uint8_t status);
+
 #endif // USER_APP_H_

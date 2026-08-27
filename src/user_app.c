@@ -14,6 +14,8 @@
 #include <user_app.h>
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
+#include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete */
+#include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
 #include <wkupct_quadec.h>
 #include <gpio.h>
 #include <spi.h>
@@ -67,10 +69,8 @@ static void button_rearm(void)
 _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
                "USER_DEVICE_NAME too long: advertisement would overflow");
 
-static void adv_update(uint8_t counter)
+static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 {
-    uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
-
     adv[0] = 0x04;              /* length of this AD structure */
     adv[1] = 0xFF;              /* manufacturer specific data */
     adv[2] = 0xFF;              /* company id 0xFFFF (dev/unassigned), LSB */
@@ -79,8 +79,54 @@ static void adv_update(uint8_t counter)
     adv[5] = USER_DEVICE_NAME_LEN + 1;
     adv[6] = GAP_AD_TYPE_COMPLETE_NAME;
     memcpy(&adv[7], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
+    return ADV_MFR_LEN + ADV_NAME_LEN;
+}
 
-    app_easy_gap_update_adv_data(adv, sizeof(adv), NULL, 0);
+/* Update the counter of a RUNNING advertisement (a click inside an active burst). */
+static void adv_update(uint8_t counter)
+{
+    uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
+    app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
+}
+
+/*
+ * BURST-FROM-SLEEP experiment (kit): the ring is SILENT when idle (extended sleep, radio
+ * off — the wkupct is the only wake source), and each click fires a short, FAST
+ * advertising burst that carries the new counter, then the device idles again. This is
+ * the battery+responsive model the beacon can't give (continuous advertising is what the
+ * beacon trades for simplicity). Known to be the fragile area on this SoC (the SDK/ROM
+ * sleep<->advertising cycle), so it is being validated on the kit first.
+ *
+ * BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each).
+ */
+#define BURST_TU  MS_TO_TIMERUNITS(3000)
+static bool advertising;
+
+/* Start a fresh timed burst carrying the counter (from idle). Sets the adv data on the
+ * active advertise command so the FIRST packet already has the mfr counter + name. */
+static void adv_burst(uint8_t counter)
+{
+    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+    cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
+    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
+    advertising = true;
+}
+
+/* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device sleeps
+ * until the next button press. */
+void user_on_adv_undirect_complete(uint8_t status)
+{
+    (void)status;
+    advertising = false;
+    arch_set_sleep_mode(app_default_sleep_mode);
+}
+
+/* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a click
+ * during that boot burst updates the counter instead of starting a second one. */
+void user_on_set_dev_config_complete(void)
+{
+    default_app_on_set_dev_config_complete();
+    advertising = true;
 }
 
 /*
@@ -307,7 +353,8 @@ static void on_wakeup(void)
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
-    adv_update(click_n);                /* advertising is continuous -> update the counter */
+    if (advertising) adv_update(click_n);  /* inside a burst -> just refresh the counter */
+    else             adv_burst(click_n);   /* idle -> wake the radio for a new burst */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
 
