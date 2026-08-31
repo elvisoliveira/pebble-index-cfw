@@ -115,7 +115,10 @@ void user_on_adv_undirect_complete(uint8_t status)
      *
      * Before the flag clear, on_wakeup still believes a burst is running and takes the
      * app_easy_gap_update_adv_data path — on an advertiser the SDK has already stopped,
-     * so that click never reaches the air. After it, on_wakeup starts a fresh burst and
+     * so that click never reaches the air until the next one carries the count. The
+     * guard only NARROWS that side: the flag is stale from the moment the SDK stops the
+     * advertiser until our first instruction, the usual dispatch window no critical
+     * section here can close. After it, on_wakeup starts a fresh burst and
      * lights a blink, and led_off() then cancels that live timer and darkens it, so the
      * new burst runs with no light.
      *
@@ -132,7 +135,10 @@ void user_on_adv_undirect_complete(uint8_t status)
 }
 
 /* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a
- * click during that boot burst updates the counter instead of starting a second one. */
+ * click during that boot burst updates the counter instead of starting a second one.
+ * (Mirror of the burst-end window: a click landing between the SDK starting that burst
+ * and this write still sees the flag false and double-starts — boot-only, and the same
+ * dispatch-width class nothing here can close.) */
 void user_on_set_dev_config_complete(void)
 {
     default_app_on_set_dev_config_complete();
