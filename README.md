@@ -87,7 +87,6 @@ RGB LED's channel C drives. On the ring the button is P0_1.
 > pressing it while LED channel C is lit sources about 11 mA out of that pad. SW2
 > was the button on the previous default build, so the habit is easy to keep.
 
-
 ## Building
 
 Requires the `arm-none-eabi` GCC toolchain and the Renesas **SDK 6.0.22.1401**.

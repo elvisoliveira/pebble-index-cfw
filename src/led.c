@@ -19,10 +19,11 @@ static timer_hnd led_timer = EASY_TIMER_INVALID_TIMER;
  * What led_set last drove. This is the one piece of LED state that has to outlive a
  * sleep, and it does: the build retains all RAM.
  *
- * It also gates every write to the pads. On the ring channels A and C are P0_2 and
- * P0_10 — the SWD pads — so an image whose LED is dark must not reprogram them, not
- * even to "turn off": going dark is an active remux, not a no-op. Keying on "is
- * anything lit" means a unit that never blinks never touches its debug pads.
+ * It also gates every write to the pads, but that buys tidiness, not SWD: the pad
+ * latch call at the end of periph_init already hands P0_2/P0_10 to GPIO on every boot
+ * and every wake, LED or no LED (bench-verified — see the pinout note in
+ * board_config.h). Keying led_off and led_reapply on "is anything lit" just spares
+ * three pad writes on paths that run often and would change nothing.
  */
 static uint8_t led_mask;
 

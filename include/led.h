@@ -48,7 +48,8 @@ _Static_assert(LED_STEP(1 << LED_CHANNELS, 0) == 0, "an out-of-range channel mus
 void led_play(const uint8_t *pattern, uint8_t len);
 
 /* Stop and go dark. Safe to call when nothing is playing — and when nothing is lit it
- * does not touch the pads at all, which is what keeps a dark ring's SWD pads alone. */
+ * skips the pad writes entirely. (A tidiness gate, not SWD protection: periph_init's
+ * pad latch already claims the SWD pads for GPIO every boot — see board_config.h.) */
 void led_off(void);
 
 /* Re-drive the lit channels after an extended-sleep wake. Call from periph_init (via

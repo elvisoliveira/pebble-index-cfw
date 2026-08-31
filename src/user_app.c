@@ -353,8 +353,10 @@ void enter_failsafe(void)
  * instruction a click runs on_wakeup, which sees click_timer still holding the expired
  * handle, cancels it, stores a fresh one and bumps fast_clicks. This function then
  * resumes and undoes both — zeroing that click's count and orphaning the new handle,
- * which fires later and zeroes the count again. A 5-click run that lands in the window
- * fails and has to be repeated. The race predates the guard; closing it needs
+ * which fires later and zeroes the count again — possibly mid-retry, wiping that run
+ * too and orphaning its handle in turn: the same bounded cascade led_run describes.
+ * A 5-click run that lands in the window fails and can cost more than one repeat.
+ * The race predates the guard; closing it needs
  * per-callback identity, which app_easy_timer does not offer (see led_run).
  *
  * That stale cancel is harmless only because on_wakeup allocates nothing before it —
