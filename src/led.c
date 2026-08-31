@@ -5,12 +5,7 @@
 #include <app_easy_timer.h>
 #include <string.h>
 
-#define STEP_DURATION  0x1F   /* bits 4:0 */
-#define STEP_CHANNELS  5      /* bits 7:5, shift */
-#define UNIT_TU        5      /* 5 timer units of 10 ms = 50 ms per duration unit */
-
-_Static_assert(LED_STEP(7, 31) == 0xFF, "step encoding: mask and duration must not overlap");
-_Static_assert(LED_STEP(7, 31) >> STEP_CHANNELS == 7, "channel mask must land in bits 7:5");
+#define UNIT_TU  MS_TO_TIMERUNITS(LED_UNIT_MS)   /* timer units per duration unit */
 
 static const GPIO_PIN led_pin[LED_CHANNELS] = { LED_A_PIN, LED_B_PIN, LED_C_PIN };
 
@@ -31,19 +26,12 @@ static void led_set(uint8_t mask)
     }
 }
 
-static void led_run(void);
-
-static void led_advance(void)
-{
-    led_timer = EASY_TIMER_INVALID_TIMER;
-    step++;
-    led_run();
-}
-
+/* Play the current step and schedule the next; its own timer callback. */
 static void led_run(void)
 {
-    uint8_t s = (step < pattern_len) ? pattern[step] : 0;
-    uint8_t units = s & STEP_DURATION;
+    led_timer = EASY_TIMER_INVALID_TIMER;   /* no-op when called from led_play */
+    uint8_t s = (step < pattern_len) ? pattern[step++] : 0;
+    uint8_t units = s & LED_STEP_DUR_MASK;
 
     /* Duration 0 ends the pattern — that is what makes 0x00 a terminator, and it is
      * the same test the ring's step advance makes before playing a step. */
@@ -51,8 +39,8 @@ static void led_run(void)
         led_set(0);
         return;
     }
-    led_set(s >> STEP_CHANNELS);
-    led_timer = app_easy_timer(units * UNIT_TU, led_advance);
+    led_set(s >> LED_STEP_CH_SHIFT);
+    led_timer = app_easy_timer(units * UNIT_TU, led_run);
 }
 
 void led_play(const uint8_t *steps, uint8_t len)

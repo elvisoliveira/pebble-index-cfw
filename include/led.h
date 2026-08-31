@@ -26,9 +26,14 @@
 
 #define LED_CHANNELS     3
 #define LED_PATTERN_MAX  25   /* the ring's own cap (FUN_07fc4e1c rejects >= 26) */
+#define LED_UNIT_MS      50   /* one duration unit */
 
-/* Build one step. mask is a 3-bit channel mask (bit0 = A), units are 50 ms each. */
-#define LED_STEP(mask, units)  ((uint8_t)(((mask) << 5) | ((units) & 0x1F)))
+#define LED_STEP_DUR_MASK  0x1F   /* bits 4:0 — duration, in LED_UNIT_MS units */
+#define LED_STEP_CH_SHIFT  5      /* bits 7:5 — channel mask */
+
+/* Build one step. mask is a 3-bit channel mask (bit0 = A), units are LED_UNIT_MS each. */
+#define LED_STEP(mask, units) \
+    ((uint8_t)(((mask) << LED_STEP_CH_SHIFT) | ((units) & LED_STEP_DUR_MASK)))
 
 /* Start playing. Copies the pattern, so a caller's stack buffer is fine. A pattern
  * already playing is replaced. */

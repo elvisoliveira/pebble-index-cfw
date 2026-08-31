@@ -167,7 +167,8 @@ static uint8_t click_count; /* advertised counter */
  */
 #define BLINK_UNITS 6   /* x50 ms = 300 ms, comfortably inside the advertising burst */
 
-_Static_assert(BLINK_UNITS * 5 < BURST_TU, "blink must finish before the burst ends");
+_Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) < BURST_TU,
+               "blink must finish before the burst ends");
 
 static uint8_t random_colour(void)
 {

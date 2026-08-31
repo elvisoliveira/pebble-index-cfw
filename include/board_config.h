@@ -50,6 +50,9 @@
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
     #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" */
     #define LED_C_PIN      GPIO_PIN_11  /* J4 "INT" — was SW2; see KIT_BTN_EXT above */
+    #ifndef KIT_BTN_EXT
+        #error "LED channel C uses P0_11 (SW2): kit builds require KIT_BTN_EXT"
+    #endif
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */
