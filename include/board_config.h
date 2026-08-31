@@ -9,9 +9,8 @@
  * CFW is shared between the two boards.
  *
  *                      ring (default)          renesas kit (TARGET_KIT)
- *   button             P0_1                    P0_11 = SW2 on-board (default), or P0_7
- *                                              external (MikroBUS J3 pin 3, btn->GND) with
- *                                              -DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT"
+ *   button             P0_1                    P0_7 external (MikroBUS J3 pin 3, btn->GND);
+ *                                              SW2 is unavailable, its P0_11 drives LED C
  *   flash CS/CLK/DO/DI  P0_9/P0_0/P0_6/P0_11    P0_1/P0_4/P0_0/P0_3 (the kit's own AT25XE021A)
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
  *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_11 (J4 "PWM"/"SDA"/"INT")
@@ -26,16 +25,11 @@
 #define LED_PORT     GPIO_PORT_0
 
 #ifdef TARGET_KIT
-    /* SW2 (270R to GND, no external pull-up, pad reset default pull-DOWN) is the default:
-     * with INPUT_PULLUP on BTN_PIN it counts clicks 1:1 (bench-validated 2026-08-27).
-     * KIT_BTN_EXT swaps in a ring-like external button on P0_7 — a deliberate option,
-     * not a fix; SW2 was never at fault. (The "counter stuck at 1 click" that once showed
-     * up on the kit was the wkupct re-arm race, fixed in a541992, independent of the pin.) */
-    #ifdef KIT_BTN_EXT
-        #define BTN_PIN    GPIO_PIN_7   /* external momentary btn, MikroBUS J3 pin 3 -> GND */
-    #else
-        #define BTN_PIN    GPIO_PIN_11  /* SW2, the kit's on-board user button (default) */
-    #endif
+    /* External momentary button on P0_7 (MikroBUS J3 pin 3 -> GND). Not a preference:
+     * SW2 sits on P0_11, which LED channel C now drives, so the on-board button is gone
+     * from this build. SW2 was never at fault — the "counter stuck at 1 click" once seen
+     * on the kit was the wkupct re-arm race, fixed in a541992, independent of the pin. */
+    #define BTN_PIN        GPIO_PIN_7
     #define FLASH_EN_PIN   GPIO_PIN_1   /* CS   */
     #define FLASH_CLK_PIN  GPIO_PIN_4   /* CLK  */
     #define FLASH_DO_PIN   GPIO_PIN_0   /* MOSI */
@@ -49,10 +43,7 @@
      * since P0_11 was SW2. */
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
     #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" */
-    #define LED_C_PIN      GPIO_PIN_11  /* J4 "INT" — was SW2; see KIT_BTN_EXT above */
-    #ifndef KIT_BTN_EXT
-        #error "LED channel C uses P0_11 (SW2): kit builds require KIT_BTN_EXT"
-    #endif
+    #define LED_C_PIN      GPIO_PIN_11  /* J4 "INT" — was SW2; hence the P0_7 button */
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */

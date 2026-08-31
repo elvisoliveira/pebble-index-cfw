@@ -7,6 +7,7 @@
 #include <gpio.h>
 #include <arch_wdg.h>
 #include <board_config.h>   /* BTN_PORT/BTN_PIN — ring vs kit (TARGET_KIT) */
+#include <led.h>
 
 static void set_pad_functions(void)
 {
@@ -16,6 +17,12 @@ static void set_pad_functions(void)
      * app_on_init: periph_init re-runs on every wake from extended sleep; app_on_init runs
      * only once. */
     GPIO_ConfigurePin(BTN_PORT, BTN_PIN, INPUT_PULLUP, PID_GPIO, false);
+
+    /* Same reason, same place: extended sleep loses the GPIO configuration, so a lit
+     * LED channel has to be re-driven here or it goes dark at the first sleep inside a
+     * pattern. No-op while the LED is dark, which also keeps a dark ring's SWD pads
+     * (channels A and C are P0_2/P0_10) untouched. */
+    led_reapply();
 }
 
 void periph_init(void)

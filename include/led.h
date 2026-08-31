@@ -30,16 +30,29 @@
 
 #define LED_STEP_DUR_MASK  0x1F   /* bits 4:0 — duration, in LED_UNIT_MS units */
 #define LED_STEP_CH_SHIFT  5      /* bits 7:5 — channel mask */
+#define LED_CH_MASK        0x07   /* one bit per channel, bit0 = A */
 
-/* Build one step. mask is a 3-bit channel mask (bit0 = A), units are LED_UNIT_MS each. */
+/* Build one step. mask is a 3-bit channel mask (bit0 = A), units are LED_UNIT_MS each.
+ * Both fields are masked: an out-of-range channel must not bleed into the next step's
+ * bits, and it must not silently vanish in the uint8_t cast either. */
 #define LED_STEP(mask, units) \
-    ((uint8_t)(((mask) << LED_STEP_CH_SHIFT) | ((units) & LED_STEP_DUR_MASK)))
+    ((uint8_t)((((mask) & LED_CH_MASK) << LED_STEP_CH_SHIFT) | ((units) & LED_STEP_DUR_MASK)))
+
+_Static_assert(LED_STEP(7, 31) == 0xFF, "step: channels and duration must not overlap");
+_Static_assert(LED_STEP(7, 31) >> LED_STEP_CH_SHIFT == 7, "channels must land in bits 7:5");
+_Static_assert(LED_STEP(1 << LED_CHANNELS, 0) == 0, "an out-of-range channel must be dropped");
 
 /* Start playing. Copies the pattern, so a caller's stack buffer is fine. A pattern
  * already playing is replaced. */
 void led_play(const uint8_t *pattern, uint8_t len);
 
-/* Stop and go dark. Safe to call when nothing is playing. */
+/* Stop and go dark. Safe to call when nothing is playing — and when nothing is lit it
+ * does not touch the pads at all, which is what keeps a dark ring's SWD pads alone. */
 void led_off(void);
+
+/* Re-drive the lit channels after an extended-sleep wake. Call from periph_init (via
+ * set_pad_functions), not from app_on_init: the GPIO configuration does not survive
+ * extended sleep, and periph_init is what runs on every wake. */
+void led_reapply(void);
 
 #endif // LED_H_

@@ -77,10 +77,11 @@ should not be able to do that. Still, that is why this README says
 Before flashing a ring, the firmware is validated on the
 **DA14535-00FXDEVKT-U** (SmartBond DA14535 USB Development Kit). It carries the
 **same SoC as the ring** (DA14535), so BLE and the click counter are exercised
-on real silicon first. On the kit the button is the on-board **SW2 (P0_11)** by
-default; build with `-DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT"` to use an external
-momentary button on **P0_7** (MikroBUS J3 pin 3 to GND) instead. On the ring the
-button is P0_1.
+on real silicon first. Build it with `-DKIT_DEFS=TARGET_KIT`.
+
+The kit button is an **external momentary button on P0_7** (MikroBUS J3 pin 3 to
+GND). The on-board SW2 is not usable on this build: it sits on P0_11, which the
+RGB LED's channel C drives. On the ring the button is P0_1.
 
 ## Building
 
