@@ -25,6 +25,7 @@
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
 #include <wkupct_quadec.h>
 #include <gpio.h>
+#include <ll.h>             /* GLOBAL_INT_DISABLE / GLOBAL_INT_RESTORE */
 #include <spi.h>
 #include <spi_flash.h>
 #include <arch.h>
@@ -342,10 +343,19 @@ void enter_failsafe(void)
     platform_reset(0);
 }
 
-static void click_reset(void)   /* no new click within CLICK_WINDOW => start over */
+/* No new click within CLICK_WINDOW => start the count over. Task context, preemptible
+ * by the click ISR — the same race family led_run guards against (see led.c). Only the
+ * ISR ever schedules click_timer, so the orphan-overwrite variant cannot happen here;
+ * this guard closes the milder one, a click landing between the two writes below
+ * losing its fast_clicks count at a window boundary. The stale-cancel window at
+ * callback entry (on_wakeup cancelling a just-expired handle) stays open, exactly as
+ * documented at led_run. */
+static void click_reset(void)
 {
+    GLOBAL_INT_DISABLE();
     click_timer = EASY_TIMER_INVALID_TIMER;
     fast_clicks = 0;
+    GLOBAL_INT_RESTORE();
 }
 
 static void on_wakeup(void)

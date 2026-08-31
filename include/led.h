@@ -33,8 +33,9 @@
 #define LED_CH_MASK        0x07   /* one bit per channel, bit0 = A */
 
 /* Build one step. mask is a 3-bit channel mask (bit0 = A), units are LED_UNIT_MS each.
- * Both fields are masked: an out-of-range channel must not bleed into the next step's
- * bits, and it must not silently vanish in the uint8_t cast either. */
+ * Both fields are masked. For the channels this changes nothing the uint8_t cast did
+ * not already do — excess bits die either way — it just states the containment where
+ * the layout is defined instead of leaving it implicit in the cast. */
 #define LED_STEP(mask, units) \
     ((uint8_t)((((mask) & LED_CH_MASK) << LED_STEP_CH_SHIFT) | ((units) & LED_STEP_DUR_MASK)))
 
