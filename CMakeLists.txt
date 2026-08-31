@@ -18,6 +18,7 @@ add_executable(${PROJECT_NAME}
     src/user_app.c
     src/ble_handlers.c
     src/cfw_ctrl.c
+    src/led.c
 )
 
 set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -flto -Wall -Werror -g3)

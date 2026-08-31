@@ -18,6 +18,7 @@
 #include <rwip_config.h>
 #include <board_config.h>   /* BTN_PIN/PORT + FLASH_* pins — ring vs kit (TARGET_KIT) */
 #include <user_app.h>
+#include <led.h>
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
 #include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete */
@@ -109,6 +110,10 @@ void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
     advertising = false;
+    /* Never sleep with the LED lit: the pad latch holds the pin high through extended
+     * sleep, so a stray channel would burn ~3 mA until the next click. The click blink
+     * is far shorter than the burst, so this only ever matters for a long pattern. */
+    led_off();
     arch_set_sleep_mode(app_default_sleep_mode);
 }
 
@@ -148,6 +153,36 @@ _Static_assert(BURST_TU > CLICK_WINDOW, "BURST_TU must exceed CLICK_WINDOW");
 static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
 static uint8_t fast_clicks;
 static uint8_t click_count; /* advertised counter */
+
+/*
+ * Every click flashes one of the seven colours the three channels can make. It is the
+ * cheapest possible exercise of the LED: over a handful of clicks each channel and
+ * each combination gets driven, with no tooling and nothing to read — you just look.
+ * It also settles, on a real ring, which channel is which colour, which the firmware
+ * itself never says.
+ *
+ * ponytail: xorshift32 from a fixed seed, so the colour sequence repeats every boot.
+ *           That is a feature while testing (reproducible) and nobody depends on it
+ *           being unpredictable. Swap in the stack's RNG if that ever changes.
+ */
+#define BLINK_UNITS 6   /* x50 ms = 300 ms, comfortably inside the advertising burst */
+
+_Static_assert(BLINK_UNITS * 5 < BURST_TU, "blink must finish before the burst ends");
+
+static uint8_t random_colour(void)
+{
+    static uint32_t seed = 0x2E1D5A3B;
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return (uint8_t)(seed % 7) + 1;   /* 1..7 — never 0, which would be "dark" */
+}
+
+static void blink_random_colour(void)
+{
+    const uint8_t pattern[] = { LED_STEP(random_colour(), BLINK_UNITS), 0x00 };
+    led_play(pattern, sizeof pattern);
+}
 
 /* POR hold: por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s). */
 #define POR_HOLD_TICKS 20
@@ -314,6 +349,7 @@ static void on_wakeup(void)
 
     /* one click */
     click_count++;
+    blink_random_colour();
     if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
         fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
