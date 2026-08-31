@@ -1,8 +1,12 @@
 /*
  * Featureless Pebble Index CFW — this file is the whole app.
  *
- * Each button press bumps a counter in the advertisement; the phone reads "counter
- * changed" as one click (it matches on dev company id 0xFFFF + the fixed address).
+ * Each button press bumps a counter in the advertisement (dev company id 0xFFFF,
+ * payload[0]), and the phone accumulates the DIFFERENCE between successive readings
+ * rather than counting one click per change. That is why a burst that never reaches
+ * the air is not a lost click: the counter kept climbing, so the next advertisement
+ * carries the higher value and the phone adds the whole jump.
+ *
  * Model: BURST-FROM-SLEEP — silent when idle (extended sleep, radio off, the wkupct
  * is the only wake source); each click fires a short, FAST advertising burst carrying
  * the new counter, then the device idles again.
@@ -105,7 +109,8 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
  *
  *  - Stop in flight (timeout fired, GAPM cancel not yet complete — up to one adv
  *    interval, 40-80 ms): the flag still reads true, so a click there refreshes a
- *    dying advertiser and its count rides out with the NEXT click. Clearing at the
+ *    dying advertiser and its count rides out with the NEXT click — losing nothing,
+ *    because the phone adds differences (see the top of this file). Clearing at the
  *    near edge instead was tried and is worse: a click then STARTS a burst whose flag
  *    the old burst's completion promptly wipes, desyncing flag and air for up to 3 s.
  *  - Boot, during the GATT database build: the flag is false with the SDK's start
