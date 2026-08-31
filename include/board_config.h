@@ -33,6 +33,9 @@
      * working. Nothing on this build ever drives P0_11 as an output, so SW2's 270 R to
      * ground is harmless. */
     #define BTN_PIN        GPIO_PIN_11
+    #ifdef KIT_BTN_EXT
+        #error "KIT_BTN_EXT was removed: the kit button is P0_11 (J4 INT, in parallel with SW2). Drop the flag."
+    #endif
     #define FLASH_EN_PIN   GPIO_PIN_1   /* CS   */
     #define FLASH_CLK_PIN  GPIO_PIN_4   /* CLK  */
     #define FLASH_DO_PIN   GPIO_PIN_0   /* MOSI */

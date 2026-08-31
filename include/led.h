@@ -52,6 +52,11 @@ void led_play(const uint8_t *pattern, uint8_t len);
  * pad latch already claims the SWD pads for GPIO every boot — see board_config.h.) */
 void led_off(void);
 
+/* Cancel any pending advance without touching the pads or the pattern's light. For ISR
+ * paths that must retire every stale timer handle before any allocation (on_wakeup):
+ * led_off would also work there, but reads as removable darkness code — this cannot. */
+void led_cancel(void);
+
 /* Re-drive the lit channels after an extended-sleep wake. Call from periph_init (via
  * set_pad_functions), not from app_on_init: the GPIO configuration does not survive
  * extended sleep, and periph_init is what runs on every wake. */

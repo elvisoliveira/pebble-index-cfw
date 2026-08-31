@@ -16,7 +16,7 @@
 static const struct app_callbacks user_app_callbacks = {
     .app_on_connection                  = default_app_on_connection,
     .app_on_disconnect                  = default_app_on_disconnect,
-    .app_on_set_dev_config_complete     = user_on_set_dev_config_complete,
+    .app_on_set_dev_config_complete     = default_app_on_set_dev_config_complete,
     .app_on_adv_undirect_complete       = user_on_adv_undirect_complete,
     .app_on_db_init_complete            = default_app_on_db_init_complete,
     .app_on_get_dev_name                = default_app_on_get_dev_name,

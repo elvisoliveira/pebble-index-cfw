@@ -16,7 +16,6 @@ void enter_failsafe(void);
  * .default_operation_adv: it is the one point that sees every advertising start we do
  * not make ourselves, so it is where the "a burst is running" flag belongs. */
 void user_advertise_operation(void);
-void user_on_set_dev_config_complete(void);
 void user_on_adv_undirect_complete(uint8_t status);
 
 #endif // USER_APP_H_

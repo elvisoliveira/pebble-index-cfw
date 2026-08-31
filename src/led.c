@@ -92,21 +92,12 @@ static void led_stop(void)
  * resumed led_run overwrite the timer that click's led_play just scheduled — an
  * orphaned handle led_off can never cancel, firing later against the wrong pattern.
  *
- * One hair-width window remains that no code here can close, and it costs more than
- * a wasted cancel: between the kernel invoking this callback and its first line, a
- * click runs led_play to completion — new pattern, step 0 lit, its own timer stored.
- * The stale led_run then resumes, clears that timer (orphaning it) and reads step 1,
- * which is the terminator, so it darkens the blink the click just started. Net effect
- * is a dropped blink, plus an orphan that fires later — against a finished pattern,
- * where it finds nothing to do, or against a live one, where it truncates that blink
- * and spawns one more orphan. Bounded either way, and cosmetic — no path here leaves a
- * channel lit, since every exit ends in led_set(0) or a scheduled advance — but only
- * as long as on_wakeup keeps its cancel-before-allocate order, which is what stops a
- * stale handle from cross-killing the click timer. Closing this window itself needs
- * per-callback identity, which app_easy_timer
- * does not offer: a generation counter cannot work, because the orphan would read the
- * same global as the live run. Two trampoline callbacks would, at the cost of being
- * ugly for a window a few instructions of kernel dispatch wide.
+ * One hair-width window remains that no code here can close: a click between kernel
+ * dispatch and our first line replaces the pattern, and this stale run then orphans
+ * the new timer and truncates or ends the new blink. Bounded and cosmetic — every exit
+ * ends dark or scheduled, so no path leaves a channel lit — as long as on_wakeup keeps
+ * its cancel-before-allocate order (the timer-slot mechanics live in ITS comment).
+ * Closing it needs per-callback identity, which app_easy_timer does not offer.
  */
 static void led_run(void)
 {
@@ -166,5 +157,12 @@ void led_off(void)
     if (led_mask != 0) {
         led_set(0);
     }
+    GLOBAL_INT_RESTORE();
+}
+
+void led_cancel(void)
+{
+    GLOBAL_INT_DISABLE();
+    led_stop();
     GLOBAL_INT_RESTORE();
 }

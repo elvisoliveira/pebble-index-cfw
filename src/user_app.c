@@ -21,7 +21,7 @@
 #include <led.h>
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
-#include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete, default_advertise_operation */
+#include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
 #include <wkupct_quadec.h>
 #include <gpio.h>
@@ -94,21 +94,30 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
  * refreshing the adv data and starting a burst, and getting it wrong costs a click:
  * refreshing an advertiser that is not running drops that count silently.
  *
- * So it is written at the two moments the air state actually changes, and nowhere
- * else. Both were wrong before:
+ * Set at the two places bursts start; cleared in ONE place,
+ * user_on_adv_undirect_complete, once the controller has actually stopped — the far
+ * edge, identical for our bursts and the SDK's own (boot, post-disconnect), so the two
+ * kinds cannot drift apart. Setting it in config-complete was wrong (with
+ * WITH_CTRL_POINT the SDK advertises from db_init_complete, not there); the
+ * user_advertise_operation funnel sees every start regardless of which path makes it.
  *
- *  - STARTS. We do not make every start. The SDK advertises from default_operation_adv
- *    after the GATT database is built and after every disconnect, and which of
- *    set_dev_config_complete or db_init_complete gets there depends on whether a custom
- *    profile is queued — with WITH_CTRL_POINT one is, so app_db_init_start() returns
- *    false and config-complete does NOT advertise. Setting the flag there, as this used
- *    to, left it true through the whole database exchange with no advertiser running.
- *    user_advertise_operation wraps that one function and sees all of it.
- *  - STOPS. app_easy_gap_advertise_stop_handler only SENDS the GAPM cancel;
- *    user_on_adv_undirect_complete runs when the controller has actually stopped, up to
- *    one advertising interval later — 40-80 ms here (user_config.h). Clearing the flag
- *    on completion left that whole window claiming to be advertising. The timeout
- *    callback runs at the near edge instead.
+ * Two windows are accepted rather than closed, both self-healing:
+ *
+ *  - Stop in flight (timeout fired, GAPM cancel not yet complete — up to one adv
+ *    interval, 40-80 ms): the flag still reads true, so a click there refreshes a
+ *    dying advertiser and its count rides out with the NEXT click. Clearing at the
+ *    near edge instead was tried and is worse: a click then STARTS a burst whose flag
+ *    the old burst's completion promptly wipes, desyncing flag and air for up to 3 s.
+ *  - Boot, during the GATT database build: the flag is false with the SDK's start
+ *    pending, so a click's own start collides with it. The loser's error lands in
+ *    adv_undirect_complete like any completion; the desync heals at the burst's far
+ *    edge. Boot-only, under 3 s.
+ *
+ * ponytail: the BURST_TU stop timer is allocated inside the SDK helper, out of sight —
+ *           on an exhausted pool the burst never stops and the radio stays on until a
+ *           connection, the failsafe gesture or a reboot. Own the burst timer (plain
+ *           advertise_start + a checked app_easy_timer, like led_run's) if that ever
+ *           stops being acceptable.
  */
 static bool advertising;
 
@@ -117,12 +126,6 @@ void user_advertise_operation(void)
 {
     advertising = true;
     default_advertise_operation();
-}
-
-/* The burst timeout fired and the stop has been sent. */
-static void burst_timeout(void)
-{
-    advertising = false;
 }
 
 static void advertise_click(uint8_t counter)
@@ -137,7 +140,7 @@ static void advertise_click(uint8_t counter)
     struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
     cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
     advertising = true;
-    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, burst_timeout);
+    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
 }
 
 /* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device
@@ -145,25 +148,15 @@ static void advertise_click(uint8_t counter)
 void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
-    /* burst_timeout already cleared the flag when the stop was sent; this is the
-     * belt-and-braces clear for starts that carry no timeout callback of ours — the
-     * SDK's own, from user_advertise_operation. Paired with led_off() under one guard
-     * so a click cannot land between them, start a burst, light a blink, and have that
-     * blink cancelled and darkened by the led_off() below. */
+    /* The ONE place the flag clears (see its comment). Paired with led_off() under one
+     * guard so a click cannot land between them, start a burst, light a blink, and
+     * have that blink cancelled and darkened by the led_off() below. */
     GLOBAL_INT_DISABLE();
     advertising = false;
     led_off();      /* never sleep with a channel lit: the pad latch holds it high
                      * through extended sleep, burning ~3 mA until the next click. */
     GLOBAL_INT_RESTORE();
     arch_set_sleep_mode(app_default_sleep_mode);
-}
-
-/* Boot. This used to set `advertising` on the assumption that the SDK starts the first
- * burst here; it usually does not (see the flag's comment). It sets nothing now —
- * whichever path does start advertising goes through user_advertise_operation. */
-void user_on_set_dev_config_complete(void)
-{
-    default_app_on_set_dev_config_complete();
 }
 
 /*
@@ -385,24 +378,13 @@ void enter_failsafe(void)
     platform_reset(0);
 }
 
-/* No new click within CLICK_WINDOW => start the count over. Task context, preemptible
- * by the click ISR — the same race family led_run guards against (see led.c), and with
- * the same residual window, which is worth spelling out because the gesture it can
- * spoil is the failsafe.
- *
- * This guard closes the tear between the two writes below. It does NOT close the
- * window before the first one: the gap timer expires, and before this callback's first
- * instruction a click runs on_wakeup, which sees click_timer still holding the expired
- * handle, cancels it, stores a fresh one and bumps fast_clicks. This function then
- * resumes and undoes both — zeroing that click's count and orphaning the new handle,
- * which fires later and zeroes the count again — possibly mid-retry, wiping that run
- * too and orphaning its handle in turn: the same bounded cascade led_run describes.
- * A 5-click run that lands in the window fails and can cost more than one repeat.
- * The race predates the guard; closing it needs
- * per-callback identity, which app_easy_timer does not offer (see led_run).
- *
- * That stale cancel is harmless only because on_wakeup allocates nothing before it —
- * see the ordering note there. */
+/* No new click within CLICK_WINDOW => start the count over. Task context, so the click
+ * ISR can preempt it. The guard closes the tear between the two writes; what it cannot
+ * close is the usual dispatch window before the first one — a click landing there has
+ * its count and fresh gap timer undone here, and the orphaned timer can wipe a retry
+ * too. Bounded and recoverable: the gesture just takes another run. The timer-slot
+ * mechanics, and the cancel-before-allocate order that keeps the stale cancel here
+ * harmless, are documented ONCE, at on_wakeup. */
 static void click_reset(void)
 {
     GLOBAL_INT_DISABLE();
@@ -420,28 +402,21 @@ static void on_wakeup(void)
 
     /*
      * one click. ORDER IS LOAD-BEARING: every cancel first, every allocation after.
+     * This is the ONE place the timer-slot mechanics live; led_run and click_reset
+     * point here.
      *
-     * app_easy_timer_cancel acts on the slot index its handle encodes and never checks
-     * that the slot still holds the same timer, while call_callback frees a slot BEFORE
-     * invoking its callback and set_callback hands back the lowest free one
-     * (app_easy_timer.c). So whenever this ISR preempts a timer callback at dispatch,
-     * the handle we still hold for it points at a free slot — and any allocation made
-     * before that stale cancel can land on exactly that slot and be cancelled in its
-     * place. It cuts both ways, and one way is dangerous:
-     *
-     *   blink first  -> the click's fresh gap timer takes the LED's freed slot, and
-     *                   led_stop cancels IT. click_reset never runs, fast_clicks never
-     *                   resets, and clicks accumulate across arbitrary gaps until the
-     *                   fifth drops the ring into the failsafe.
-     *   cancel first -> the LED's stale handle points at a slot that is still free, so
-     *                   its cancel is an ASSERT_WARNING no-op, and every allocation
-     *                   below happens after every cancel. Nothing can cross-kill.
-     *
-     * led_off() therefore leads, even though blink_random_colour() would overwrite the
-     * pattern anyway: it is here for its cancel, not for the darkness.
+     * app_easy_timer handles carry no identity — cancel acts on a bare slot index, a
+     * slot is freed BEFORE its callback runs, and allocation reuses the lowest free
+     * slot (app_easy_timer.c). So when this ISR preempts a timer callback at dispatch,
+     * the handle we still hold for it points at a free slot: cancelling it now is an
+     * ASSERT_WARNING no-op, but an allocation made first can take that very slot and
+     * be cancelled in its place. That cross-kill is not hypothetical — with the blink
+     * leading, the fresh gap timer died in the LED's freed slot, click_reset never
+     * ran, and slow clicks accumulated into an unasked-for failsafe.
      */
     click_count++;
-    led_off();
+    led_cancel();                       /* the LED's cancel, split from its darkness so
+                                         * it cannot be "simplified" away as redundant */
     if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
         fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
@@ -467,7 +442,7 @@ static void on_wakeup(void)
             fast_clicks = 0;
         }
     }
-    blink_random_colour();              /* led_stop is a no-op now: led_off already ran */
+    blink_random_colour();              /* its own cancel is a no-op: led_cancel led */
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
