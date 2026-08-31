@@ -29,7 +29,15 @@ static uint8_t led_mask;
 /* Drive the three channels from a 3-bit mask (bit0 = channel A).
  *
  * "Off" is INPUT, not OUTPUT-low, exactly as the ring does it (FUN_07fc4f20): a
- * high-Z pad neither leaks through the LED nor fights it. */
+ * high-Z pad neither leaks through the LED nor fights it.
+ *
+ * A pad's HIGH level is VBAT_HIGH, so how bright a channel gets is a rail question,
+ * not a GPIO one. Green and blue have Vf around 3 V and barely conduct below it, which
+ * is why the stock firmware refcounts the DC-DC and holds VBAT_HIGH at
+ * SYSCNTL_DCDC_LEVEL_3V0 for as long as any channel is lit. We do not: periph_init
+ * already brings the DC-DC up in boost at 3.0 V, and on the kit VBAT_HIGH is USB's
+ * 3.3 V. It would matter on a buck-wired board, where VBAT_HIGH is the raw battery —
+ * red might light and green and blue not. Read that as a rail symptom, not miswiring. */
 static void led_set(uint8_t mask)
 {
     led_mask = mask;
@@ -83,10 +91,19 @@ static void led_stop(void)
  * resumed led_run overwrite the timer that click's led_play just scheduled — an
  * orphaned handle led_off can never cancel, firing later against the wrong pattern.
  *
- * One hair-width window remains that no code here can close: between the kernel
- * invoking this callback and its first line, led_timer still holds the just-expired
- * handle, so a click there makes led_stop cancel an expired timer. Whether the SDK
- * tolerates that is unverified; the window is a few instructions of kernel dispatch.
+ * One hair-width window remains that no code here can close, and it costs more than
+ * a wasted cancel: between the kernel invoking this callback and its first line, a
+ * click runs led_play to completion — new pattern, step 0 lit, its own timer stored.
+ * The stale led_run then resumes, clears that timer (orphaning it) and reads step 1,
+ * which is the terminator, so it darkens the blink the click just started. Net effect
+ * is a dropped blink, plus an orphan that fires later — against a finished pattern,
+ * where it finds nothing to do, or against a live one, where it truncates that blink
+ * and spawns one more orphan. Bounded either way, and only ever cosmetic: no path
+ * leaves a channel lit, because every exit here ends in led_set(0) or a scheduled
+ * advance. Closing it needs per-callback identity, which app_easy_timer
+ * does not offer: a generation counter cannot work, because the orphan would read the
+ * same global as the live run. Two trampoline callbacks would, at the cost of being
+ * ugly for a window a few instructions of kernel dispatch wide.
  */
 static void led_run(void)
 {

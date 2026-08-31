@@ -57,11 +57,23 @@
      * as GPIO, HIGH to light). Which channel is which colour is NOT known: the firmware
      * only ever speaks in channels. Lighting one at a time on a real ring settles it.
      *
-     * ⚠ P0_2 and P0_10 are also the SWD pins. The ring reuses its debug pads for the
-     * LED — reasonable in a sealed product, but it means a CFW that lights the LED may
-     * cost the SWD recovery path, which is this project's last resort. Channels are
-     * high-Z when dark, so the cost is probably confined to the lit window, but that is
-     * unproven. Decide before shipping an LED-enabled image to a ring. */
+     * ⚠ P0_2 and P0_10 are also the SWD pins, and that is a PCB fact rather than a
+     * choice: the flex routes the LED to those pads. The ring's only free pin is P0_5,
+     * and it does not reach the LED, so there is no other pinout to pick.
+     *
+     * The LED does NOT cost SWD, though — the CFW already does, with or without it.
+     * Bench, 2026-08-30: with SYS_CTRL_REG = 0x01A2, so DEBUGGER_ENABLE (0x0180) = 3 =
+     * SWD_DATA_AT_P0_10, the debugger owned P0_2/P0_10 and SWD was alive; writing
+     * PAD_LATCH_REG = 1 killed it. The port mode register wins over the debug mux once
+     * the latch opens, and P0x_MODE_REG resets to 0x200 — INPUT, PID_GPIO. periph_init
+     * ends with GPIO_set_pad_latch_en(true) and never configures those two pins, so
+     * every boot and every extended-sleep wake hands them to GPIO. That is the
+     * long-standing "bootable image on the kit flash = recurring SWD death".
+     *
+     * So SWD lives only in the window between reset and that latch call, which is
+     * exactly what the bench recovery procedures rely on. Accepted 2026-08-31: the
+     * LED changes nothing here, and SWD sits behind three recovery nets that do not
+     * need it — 5 clicks, the NMI hook, and the boot counter. */
     #define LED_A_PIN      GPIO_PIN_2   /* ⚠ also SWDIO/SWCLK */
     #define LED_B_PIN      GPIO_PIN_8
     #define LED_C_PIN      GPIO_PIN_10  /* ⚠ also SWDIO/SWCLK */

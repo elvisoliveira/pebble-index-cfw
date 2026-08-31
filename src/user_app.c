@@ -344,12 +344,21 @@ void enter_failsafe(void)
 }
 
 /* No new click within CLICK_WINDOW => start the count over. Task context, preemptible
- * by the click ISR — the same race family led_run guards against (see led.c). Only the
- * ISR ever schedules click_timer, so the orphan-overwrite variant cannot happen here;
- * this guard closes the milder one, a click landing between the two writes below
- * losing its fast_clicks count at a window boundary. The stale-cancel window at
- * callback entry (on_wakeup cancelling a just-expired handle) stays open, exactly as
- * documented at led_run. */
+ * by the click ISR — the same race family led_run guards against (see led.c), and with
+ * the same residual window, which is worth spelling out because the gesture it can
+ * spoil is the failsafe.
+ *
+ * This guard closes the tear between the two writes below. It does NOT close the
+ * window before the first one: the gap timer expires, and before this callback's first
+ * instruction a click runs on_wakeup, which sees click_timer still holding the expired
+ * handle, cancels it, stores a fresh one and bumps fast_clicks. This function then
+ * resumes and undoes both — zeroing that click's count and orphaning the new handle,
+ * which fires later and zeroes the count again. A 5-click run that lands in the window
+ * fails and has to be repeated. The race predates the guard; closing it needs
+ * per-callback identity, which app_easy_timer does not offer (see led_run).
+ *
+ * That stale cancel is harmless only because on_wakeup allocates nothing before it —
+ * see the ordering note there. */
 static void click_reset(void)
 {
     GLOBAL_INT_DISABLE();
@@ -367,7 +376,6 @@ static void on_wakeup(void)
 
     /* one click */
     click_count++;
-    blink_random_colour();
     if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
         fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
@@ -375,6 +383,15 @@ static void on_wakeup(void)
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
+    /* AFTER the click_timer work, and that order is load-bearing. app_easy_timer_cancel
+     * acts on the slot index its handle encodes and does not check that the slot still
+     * holds the same timer (app_easy_timer.c), while call_callback frees a slot BEFORE
+     * invoking its callback and set_callback hands back the lowest free one. So when a
+     * click preempts click_reset at dispatch, click_timer holds an already-freed handle
+     * — and any allocation made before the stale cancel can land on that very slot and
+     * be cancelled in its place. Blinking first did exactly that: the blink's advance
+     * timer could be killed and the channel held lit until the burst-end led_off(). */
+    blink_random_colour();
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
