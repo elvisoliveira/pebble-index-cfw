@@ -21,7 +21,7 @@
 #include <led.h>
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
-#include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete */
+#include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete, default_advertise_operation */
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
 #include <wkupct_quadec.h>
 #include <gpio.h>
@@ -88,7 +88,42 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 
 /* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each). */
 #define BURST_TU  MS_TO_TIMERUNITS(3000)
+
+/*
+ * "A burst is on the air right now." advertise_click reads it to choose between
+ * refreshing the adv data and starting a burst, and getting it wrong costs a click:
+ * refreshing an advertiser that is not running drops that count silently.
+ *
+ * So it is written at the two moments the air state actually changes, and nowhere
+ * else. Both were wrong before:
+ *
+ *  - STARTS. We do not make every start. The SDK advertises from default_operation_adv
+ *    after the GATT database is built and after every disconnect, and which of
+ *    set_dev_config_complete or db_init_complete gets there depends on whether a custom
+ *    profile is queued — with WITH_CTRL_POINT one is, so app_db_init_start() returns
+ *    false and config-complete does NOT advertise. Setting the flag there, as this used
+ *    to, left it true through the whole database exchange with no advertiser running.
+ *    user_advertise_operation wraps that one function and sees all of it.
+ *  - STOPS. app_easy_gap_advertise_stop_handler only SENDS the GAPM cancel;
+ *    user_on_adv_undirect_complete runs when the controller has actually stopped, up to
+ *    one advertising interval later — 40-80 ms here (user_config.h). Clearing the flag
+ *    on completion left that whole window claiming to be advertising. The timeout
+ *    callback runs at the near edge instead.
+ */
 static bool advertising;
+
+/* .default_operation_adv — every SDK-initiated start funnels through here. */
+void user_advertise_operation(void)
+{
+    advertising = true;
+    default_advertise_operation();
+}
+
+/* The burst timeout fired and the stop has been sent. */
+static void burst_timeout(void)
+{
+    advertising = false;
+}
 
 static void advertise_click(uint8_t counter)
 {
@@ -101,8 +136,8 @@ static void advertise_click(uint8_t counter)
     /* Set the active command before starting, so the first packet is complete. */
     struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
     cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
-    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
     advertising = true;
+    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, burst_timeout);
 }
 
 /* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device
@@ -110,39 +145,25 @@ static void advertise_click(uint8_t counter)
 void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
-    /*
-     * Both writes together, or a click landing between them is mishandled twice over.
-     *
-     * Before the flag clear, on_wakeup still believes a burst is running and takes the
-     * app_easy_gap_update_adv_data path — on an advertiser the SDK has already stopped,
-     * so that click never reaches the air until the next one carries the count. The
-     * guard only NARROWS that side: the flag is stale from the moment the SDK stops the
-     * advertiser until our first instruction, the usual dispatch window no critical
-     * section here can close. After it, on_wakeup starts a fresh burst and
-     * lights a blink, and led_off() then cancels that live timer and darkens it, so the
-     * new burst runs with no light.
-     *
-     * led_off() is also what keeps the LED from surviving into sleep: the pad latch
-     * holds a lit pin high through extended sleep, and a stray channel would burn ~3 mA
-     * until the next click. The click blink is far shorter than the burst, so that part
-     * only matters for a long pattern.
-     */
+    /* burst_timeout already cleared the flag when the stop was sent; this is the
+     * belt-and-braces clear for starts that carry no timeout callback of ours — the
+     * SDK's own, from user_advertise_operation. Paired with led_off() under one guard
+     * so a click cannot land between them, start a burst, light a blink, and have that
+     * blink cancelled and darkened by the led_off() below. */
     GLOBAL_INT_DISABLE();
     advertising = false;
-    led_off();
+    led_off();      /* never sleep with a channel lit: the pad latch holds it high
+                     * through extended sleep, burning ~3 mA until the next click. */
     GLOBAL_INT_RESTORE();
     arch_set_sleep_mode(app_default_sleep_mode);
 }
 
-/* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a
- * click during that boot burst updates the counter instead of starting a second one.
- * (Mirror of the burst-end window: a click landing between the SDK starting that burst
- * and this write still sees the flag false and double-starts — boot-only, and the same
- * dispatch-width class nothing here can close.) */
+/* Boot. This used to set `advertising` on the assumption that the SDK starts the first
+ * burst here; it usually does not (see the flag's comment). It sets nothing now —
+ * whichever path does start advertising goes through user_advertise_operation. */
 void user_on_set_dev_config_complete(void)
 {
     default_app_on_set_dev_config_complete();
-    advertising = true;
 }
 
 /*
@@ -433,7 +454,16 @@ static void on_wakeup(void)
              * accumulating across arbitrary gaps until the fifth dropped the ring into
              * the failsafe. Start the count over instead — a missed gesture is cheap,
              * an unasked-for recovery is not. led_run makes the same call for the same
-             * reason. */
+             * reason.
+             *
+             * ponytail: under SUSTAINED exhaustion this disables the gesture outright,
+             *           because the reset only ever lands on clicks 1-4 (the fifth
+             *           allocates nothing). Acceptable while exhaustion stays a
+             *           transient: the pool is 10, a click holds at most a gap timer, an
+             *           LED timer and the SDK's adv timer, and the scheduler drains
+             *           cancelled slots between clicks. If it ever stops being
+             *           transient, keep the count at CLICKS_TO_FAILSAFE - 1 instead of
+             *           special-casing anything earlier. */
             fast_clicks = 0;
         }
     }
