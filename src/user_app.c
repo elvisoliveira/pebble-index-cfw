@@ -110,11 +110,24 @@ static void advertise_click(uint8_t counter)
 void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
+    /*
+     * Both writes together, or a click landing between them is mishandled twice over.
+     *
+     * Before the flag clear, on_wakeup still believes a burst is running and takes the
+     * app_easy_gap_update_adv_data path — on an advertiser the SDK has already stopped,
+     * so that click never reaches the air. After it, on_wakeup starts a fresh burst and
+     * lights a blink, and led_off() then cancels that live timer and darkens it, so the
+     * new burst runs with no light.
+     *
+     * led_off() is also what keeps the LED from surviving into sleep: the pad latch
+     * holds a lit pin high through extended sleep, and a stray channel would burn ~3 mA
+     * until the next click. The click blink is far shorter than the burst, so that part
+     * only matters for a long pattern.
+     */
+    GLOBAL_INT_DISABLE();
     advertising = false;
-    /* Never sleep with the LED lit: the pad latch holds the pin high through extended
-     * sleep, so a stray channel would burn ~3 mA until the next click. The click blink
-     * is far shorter than the burst, so this only ever matters for a long pattern. */
     led_off();
+    GLOBAL_INT_RESTORE();
     arch_set_sleep_mode(app_default_sleep_mode);
 }
 
@@ -408,6 +421,15 @@ static void on_wakeup(void)
     } else {
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
+        if (click_timer == EASY_TIMER_INVALID_TIMER) {
+            /* Out of timer slots, so nothing will ever expire this run. Leaving
+             * fast_clicks armed is the unsafe half of that: clicks would keep
+             * accumulating across arbitrary gaps until the fifth dropped the ring into
+             * the failsafe. Start the count over instead — a missed gesture is cheap,
+             * an unasked-for recovery is not. led_run makes the same call for the same
+             * reason. */
+            fast_clicks = 0;
+        }
     }
     blink_random_colour();              /* led_stop is a no-op now: led_off already ran */
     advertise_click(click_count);       /* refresh active burst or start a new one */

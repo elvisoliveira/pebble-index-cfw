@@ -43,8 +43,10 @@
      * kit's own D7, so channel A blinks twice over.
      *
      * P0_5 (J4 "TX") looks like the obvious third pin and is NOT usable — it reads
-     * stuck high, because the J-Link OB's virtual COM port owns it. That leaves the kit
-     * with exactly five usable pins for five jobs, so the assignment is a permutation,
+     * stuck high, because the J-Link OB's virtual COM port owns it. P0_6 (J4 "RX") is
+     * that same VCOM's other half, yet the OB leaves it alone — channel C lights and
+     * goes dark cleanly on the bench. That leaves the kit with exactly five usable pins
+     * for five jobs, so the assignment is a permutation,
      * not a choice. This one is the good permutation: it keeps P0_7 for the microphone,
      * which is the pin the ring uses too, and it keeps every output off SW2's pin. */
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
