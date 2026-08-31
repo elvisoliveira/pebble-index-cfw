@@ -99,9 +99,11 @@ static void led_stop(void)
  * which is the terminator, so it darkens the blink the click just started. Net effect
  * is a dropped blink, plus an orphan that fires later — against a finished pattern,
  * where it finds nothing to do, or against a live one, where it truncates that blink
- * and spawns one more orphan. Bounded either way, and only ever cosmetic: no path
- * leaves a channel lit, because every exit here ends in led_set(0) or a scheduled
- * advance. Closing it needs per-callback identity, which app_easy_timer
+ * and spawns one more orphan. Bounded either way, and cosmetic — no path here leaves a
+ * channel lit, since every exit ends in led_set(0) or a scheduled advance — but only
+ * as long as on_wakeup keeps its cancel-before-allocate order, which is what stops a
+ * stale handle from cross-killing the click timer. Closing this window itself needs
+ * per-callback identity, which app_easy_timer
  * does not offer: a generation counter cannot work, because the orphan would read the
  * same global as the live run. Two trampoline callbacks would, at the cost of being
  * ugly for a window a few instructions of kernel dispatch wide.

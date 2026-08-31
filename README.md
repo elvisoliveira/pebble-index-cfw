@@ -79,13 +79,10 @@ Before flashing a ring, the firmware is validated on the
 **same SoC as the ring** (DA14535), so BLE and the click counter are exercised
 on real silicon first. Build it with `-DKIT_DEFS=TARGET_KIT`.
 
-The kit button is an **external momentary button on P0_7** (MikroBUS J3 pin 3 to
-GND). The on-board SW2 is not usable on this build: it sits on P0_11, which the
-RGB LED's channel C drives. On the ring the button is P0_1.
-
-> ⚠ **Do not press SW2** on this build. It ties P0_11 to ground through 270 Ω, so
-> pressing it while LED channel C is lit sources about 11 mA out of that pad. SW2
-> was the button on the previous default build, so the habit is easy to keep.
+The kit button is **P0_11**, which is the on-board **SW2**. SW2 is a tiny
+surface-mount button, so for repeated clicking you can wire a normal momentary
+button to **J4 `INT`** (P0_11) and ground: it sits in parallel with SW2, and both
+work. On the ring the button is P0_1.
 
 ## Building
 

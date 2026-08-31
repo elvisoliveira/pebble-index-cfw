@@ -9,11 +9,13 @@
  * CFW is shared between the two boards.
  *
  *                      ring (default)          renesas kit (TARGET_KIT)
- *   button             P0_1                    P0_7 external (MikroBUS J3 pin 3, btn->GND);
- *                                              SW2 is unavailable, its P0_11 drives LED C
+ *   button             P0_1                    P0_11 (J4 "INT") — SW2's pin, so an
+ *                                              external button there sits in parallel
+ *                                              with it and both work
  *   flash CS/CLK/DO/DI  P0_9/P0_0/P0_6/P0_11    P0_1/P0_4/P0_0/P0_3 (the kit's own AT25XE021A)
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
- *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_11 (J4 "PWM"/"SDA"/"INT")
+ *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_6 (J4 "PWM"/"SDA"/"RX")
+ *   microphone in      P0_7                    P0_7 (J3 "CS") — same pin on both
  *
  * The pin numbers were read out of the ring's own factory firmware (2026-08-10), not
  * guessed. DC-DC is NOT here: periph_init auto-detects buck->boost, same code both boards.
@@ -25,25 +27,29 @@
 #define LED_PORT     GPIO_PORT_0
 
 #ifdef TARGET_KIT
-    /* External momentary button on P0_7 (MikroBUS J3 pin 3 -> GND). Not a preference:
-     * SW2 sits on P0_11, which LED channel C now drives, so the on-board button is gone
-     * from this build. SW2 was never at fault — the "counter stuck at 1 click" once seen
-     * on the kit was the wkupct re-arm race, fixed in a541992, independent of the pin. */
-    #define BTN_PIN        GPIO_PIN_7
+    /* P0_11 is SW2's pin (bench-validated 2026-08-27: the counter tracked clicks 1:1).
+     * An external momentary button wired to J4 "INT" sits in PARALLEL with SW2 — both
+     * only close the pin to ground — so you get the comfortable button and SW2 keeps
+     * working. Nothing on this build ever drives P0_11 as an output, so SW2's 270 R to
+     * ground is harmless. */
+    #define BTN_PIN        GPIO_PIN_11
     #define FLASH_EN_PIN   GPIO_PIN_1   /* CS   */
     #define FLASH_CLK_PIN  GPIO_PIN_4   /* CLK  */
     #define FLASH_DO_PIN   GPIO_PIN_0   /* MOSI */
     #define FLASH_DI_PIN   GPIO_PIN_3   /* MISO */
     /* no FLASH_HAS_PWR_PINS: on the kit P0_4/P0_3 are the SPI CLK/MISO, not power enables */
     /* RGB LED. Bench-confirmed on 2026-08-31 by driving each pin over SWD and looking:
-     * all three light on a HIGH, same polarity as the ring. P0_9 also drives the kit's
-     * own D7, so channel A blinks twice over. P0_5 (J4 "TX") was the obvious third pin
-     * and is NOT usable: it reads stuck-high because the J-Link OB's virtual COM port
-     * owns it. P0_11 is free instead — hence the unconditional P0_7 button above, since
-     * P0_11 was SW2. */
+     * every channel lights on a HIGH, same polarity as the ring. P0_9 also drives the
+     * kit's own D7, so channel A blinks twice over.
+     *
+     * P0_5 (J4 "TX") looks like the obvious third pin and is NOT usable — it reads
+     * stuck high, because the J-Link OB's virtual COM port owns it. That leaves the kit
+     * with exactly five usable pins for five jobs, so the assignment is a permutation,
+     * not a choice. This one is the good permutation: it keeps P0_7 for the microphone,
+     * which is the pin the ring uses too, and it keeps every output off SW2's pin. */
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
-    #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" */
-    #define LED_C_PIN      GPIO_PIN_11  /* J4 "INT" — was SW2; hence the P0_7 button */
+    #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" — same channel, same pin as the ring */
+    #define LED_C_PIN      GPIO_PIN_6   /* J4 "RX"  */
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */

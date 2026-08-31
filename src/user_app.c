@@ -156,11 +156,13 @@ static uint8_t fast_clicks;
 static uint8_t click_count; /* advertised counter */
 
 /*
- * Every click flashes one of the seven colours the three channels can make. It is the
- * cheapest possible exercise of the LED: over a handful of clicks each channel and
- * each combination gets driven, with no tooling and nothing to read — you just look.
- * It also settles, on a real ring, which channel is which colour, which the firmware
- * itself never says.
+ * Every click flashes ONE channel — a solid red, green or blue, never a mix. The three
+ * channels can make seven colours between them, but lighting one at a time is both
+ * simpler and more useful: it is the cheapest exercise of the LED there is, with no
+ * tooling and nothing to read, and on a real ring it directly answers which channel is
+ * which colour — the one thing the factory firmware never says, since it only ever
+ * speaks in channels. A mix cannot answer that; you would see cyan and still not know
+ * which pin made the green.
  *
  * ponytail: xorshift32 from a fixed seed, so the colour sequence repeats every boot.
  *           That is a feature while testing (reproducible) and nobody depends on it
@@ -184,7 +186,7 @@ static uint8_t random_colour(void)
     seed ^= seed << 13;
     seed ^= seed >> 17;
     seed ^= seed << 5;
-    return (uint8_t)(seed % 7) + 1;   /* 1..7 — never 0, which would be "dark" */
+    return (uint8_t)(1 << (seed % LED_CHANNELS));   /* exactly one channel: a solid colour */
 }
 
 static void blink_random_colour(void)
@@ -376,8 +378,30 @@ static void on_wakeup(void)
         return;
     }
 
-    /* one click */
+    /*
+     * one click. ORDER IS LOAD-BEARING: every cancel first, every allocation after.
+     *
+     * app_easy_timer_cancel acts on the slot index its handle encodes and never checks
+     * that the slot still holds the same timer, while call_callback frees a slot BEFORE
+     * invoking its callback and set_callback hands back the lowest free one
+     * (app_easy_timer.c). So whenever this ISR preempts a timer callback at dispatch,
+     * the handle we still hold for it points at a free slot — and any allocation made
+     * before that stale cancel can land on exactly that slot and be cancelled in its
+     * place. It cuts both ways, and one way is dangerous:
+     *
+     *   blink first  -> the click's fresh gap timer takes the LED's freed slot, and
+     *                   led_stop cancels IT. click_reset never runs, fast_clicks never
+     *                   resets, and clicks accumulate across arbitrary gaps until the
+     *                   fifth drops the ring into the failsafe.
+     *   cancel first -> the LED's stale handle points at a slot that is still free, so
+     *                   its cancel is an ASSERT_WARNING no-op, and every allocation
+     *                   below happens after every cancel. Nothing can cross-kill.
+     *
+     * led_off() therefore leads, even though blink_random_colour() would overwrite the
+     * pattern anyway: it is here for its cancel, not for the darkness.
+     */
     click_count++;
+    led_off();
     if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
         fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
@@ -385,15 +409,7 @@ static void on_wakeup(void)
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
     }
-    /* AFTER the click_timer work, and that order is load-bearing. app_easy_timer_cancel
-     * acts on the slot index its handle encodes and does not check that the slot still
-     * holds the same timer (app_easy_timer.c), while call_callback frees a slot BEFORE
-     * invoking its callback and set_callback hands back the lowest free one. So when a
-     * click preempts click_reset at dispatch, click_timer holds an already-freed handle
-     * — and any allocation made before the stale cancel can land on that very slot and
-     * be cancelled in its place. Blinking first did exactly that: the blink's advance
-     * timer could be killed and the channel held lit until the burst-end led_off(). */
-    blink_random_colour();
+    blink_random_colour();              /* led_stop is a no-op now: led_off already ran */
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
