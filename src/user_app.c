@@ -166,13 +166,16 @@ static uint8_t click_count; /* advertised counter */
  *           being unpredictable. Swap in the stack's RNG if that ever changes.
  */
 /* One step at its longest: 31 x 50 ms = 1.55 s, the most the ring's own format
- * expresses without a second step. Long enough to read the colour comfortably, and it
- * ends well inside the advertising burst — so the burst-end led_off() never has to
- * cut it short. */
+ * expresses without a second step. Long enough to read the colour comfortably.
+ *
+ * A late click IS cut short, and that is fine: advertise_click() does not restart
+ * BURST_TU while a burst is already running, so a click 2.5 s into a 3 s burst gets
+ * ~0.5 s of light before the burst-end led_off(). The assert below only guarantees
+ * the blink fits a burst it starts. */
 #define BLINK_UNITS  LED_STEP_DUR_MASK
 
 _Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) <= BURST_TU,
-               "blink must fit inside the burst, or led_off() truncates it");
+               "a blink that starts a burst must fit in it, or led_off() always truncates");
 
 static uint8_t random_colour(void)
 {

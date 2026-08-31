@@ -51,9 +51,15 @@ static void led_set(uint8_t mask)
  */
 void led_reapply(void)
 {
+    /* Guarded like every other led_set caller: a click landing mid-loop would run
+     * led_play -> led_set(new mask) on all three pads, and the resumed loop here would
+     * then write the OLD mask over the remaining channels — pads split between two
+     * masks, with led_mask recording only the newer one. */
+    GLOBAL_INT_DISABLE();
     if (led_mask != 0) {
         led_set(led_mask);
     }
+    GLOBAL_INT_RESTORE();
 }
 
 static void led_stop(void)
@@ -66,37 +72,58 @@ static void led_stop(void)
     step = 0;
 }
 
-/* Play the current step and schedule the next; its own timer callback. */
+/*
+ * Play the current step and schedule the next; its own timer callback. Runs in TASK
+ * context (kernel timer dispatch), which the wkupct ISR can preempt at any line.
+ *
+ * THIS guard, not the one in led_play, is what closes the race the two share:
+ * interrupts preempt task code, never the other way round, so an ISR-side critical
+ * section runs only after the damage window has already passed. Unguarded, a click
+ * landing between the handle clear below and the reassignment at the bottom lets the
+ * resumed led_run overwrite the timer that click's led_play just scheduled — an
+ * orphaned handle led_off can never cancel, firing later against the wrong pattern.
+ *
+ * One hair-width window remains that no code here can close: between the kernel
+ * invoking this callback and its first line, led_timer still holds the just-expired
+ * handle, so a click there makes led_stop cancel an expired timer. Whether the SDK
+ * tolerates that is unverified; the window is a few instructions of kernel dispatch.
+ */
 static void led_run(void)
 {
+    GLOBAL_INT_DISABLE();
     led_timer = EASY_TIMER_INVALID_TIMER;   /* no-op when called from led_play */
     uint8_t s = (step < pattern_len) ? pattern[step++] : 0;
     uint8_t units = s & LED_STEP_DUR_MASK;
 
-    /* Duration 0 ends the pattern — that is what makes 0x00 a terminator, and it is
-     * the same test the ring's step advance makes before playing a step. */
     if (units == 0) {
+        /* Duration 0 ends the pattern — that is what makes 0x00 a terminator, and it
+         * is the same test the ring's step advance makes before playing a step. */
         led_set(0);
-        return;
+    } else {
+        led_set(s >> LED_STEP_CH_SHIFT);
+        led_timer = app_easy_timer(units * UNIT_TU, led_run);
+        if (led_timer == EASY_TIMER_INVALID_TIMER) {
+            /* Out of timer slots (they are a fixed pool, and a cancelled one stays
+             * taken until its message is processed). Nothing will advance this step,
+             * so go dark rather than hold a channel lit for the rest of the burst. */
+            led_set(0);
+        }
     }
-    led_set(s >> LED_STEP_CH_SHIFT);
-
-    led_timer = app_easy_timer(units * UNIT_TU, led_run);
-    if (led_timer == EASY_TIMER_INVALID_TIMER) {
-        /* Out of timer slots (they are a fixed pool, and a cancelled one stays taken
-         * until its message is processed). Nothing will advance this step, so go dark
-         * rather than hold a channel lit for the rest of the burst. */
-        led_set(0);
-    }
+    /* Single exit on purpose: DISABLE/RESTORE are a brace pair — an early return
+     * between them would leave interrupts off for good. */
+    GLOBAL_INT_RESTORE();
 }
 
 /*
- * led_play runs in INTERRUPT context — on_wakeup is the wkupct callback — while
- * led_run and the led_off() at burst end run in task context. Both touch led_timer,
- * pattern and step. Without the critical section a click landing inside led_run
- * between the handle being cleared and reassigned orphans a timer that led_off can
- * then never cancel, and it fires later against a different pattern. The window is a
- * few instructions, but rapid clicking is exactly the failsafe gesture.
+ * led_play runs in INTERRUPT context today — on_wakeup is the wkupct callback — while
+ * led_run and the led_off() at burst end run in task context, and all three touch
+ * led_timer, pattern and step. The guard that actually closes their shared race lives
+ * in led_run (see there): an ISR cannot be preempted by the task code it races with,
+ * so on the current call path this critical section defends nothing. It stays because
+ * it costs two instructions and makes led_play safe from ANY context — a future
+ * task-context caller (a GATT-triggered pattern, say) would otherwise silently reopen
+ * the race. Nesting over led_run's own guard is fine: each pair keeps its own PRIMASK
+ * copy in its own scope.
  */
 void led_play(const uint8_t *steps, uint8_t len)
 {

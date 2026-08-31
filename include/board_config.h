@@ -39,8 +39,8 @@
      * all three light on a HIGH, same polarity as the ring. P0_9 also drives the kit's
      * own D7, so channel A blinks twice over. P0_5 (J4 "TX") was the obvious third pin
      * and is NOT usable: it reads stuck-high because the J-Link OB's virtual COM port
-     * owns it. P0_11 is free instead — which makes KIT_BTN_EXT mandatory on this build,
-     * since P0_11 was SW2. */
+     * owns it. P0_11 is free instead — hence the unconditional P0_7 button above, since
+     * P0_11 was SW2. */
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
     #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" */
     #define LED_C_PIN      GPIO_PIN_11  /* J4 "INT" — was SW2; hence the P0_7 button */
