@@ -12,6 +12,14 @@
 #define DEF_SVC1_CTRL_POINT_CHAR_LEN     32
 #define DEF_SVC1_CONTROL_POINT_USER_DESC "Control Point"
 
+/* Audio out: notify-only, sized to what a 247-byte MTU carries (MTU minus the 3-byte
+ * ATT header). The Control Point could carry the clip too, but at 32 bytes a value it
+ * would be the bottleneck, and it is a command channel — mixing bulk data into it
+ * makes both harder to reason about. */
+#define DEF_SVC1_AUDIO_UUID_128          {0x21, 0xEE, 0x8D, 0x0C, 0xE1, 0xF0, 0x4A, 0x0C, 0xB3, 0x25, 0xDC, 0x53, 0x6A, 0x68, 0x86, 0x2D}
+#define DEF_SVC1_AUDIO_CHAR_LEN          244
+#define DEF_SVC1_AUDIO_USER_DESC         "Audio"
+
 /// Custom1 Service Data Base Characteristic enum
 enum
 {
@@ -21,6 +29,11 @@ enum
     SVC1_IDX_CONTROL_POINT_VAL,
     SVC1_IDX_CONTROL_POINT_NTF_CFG,
     SVC1_IDX_CONTROL_POINT_USER_DESC,
+
+    SVC1_IDX_AUDIO_CHAR,
+    SVC1_IDX_AUDIO_VAL,
+    SVC1_IDX_AUDIO_NTF_CFG,
+    SVC1_IDX_AUDIO_USER_DESC,
 
     CUSTS1_IDX_NB
 };

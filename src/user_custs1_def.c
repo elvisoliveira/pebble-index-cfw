@@ -10,6 +10,7 @@
 static const att_svc_desc128_t custs1_svc1                          = DEF_SVC1_UUID_128;
 
 static const uint8_t SVC1_CTRL_POINT_UUID_128[ATT_UUID_128_LEN]     = DEF_SVC1_CTRL_POINT_UUID_128;
+static const uint8_t SVC1_AUDIO_UUID_128[ATT_UUID_128_LEN]          = DEF_SVC1_AUDIO_UUID_128;
 
 // Attribute specifications
 static const uint16_t att_decl_svc       = ATT_DECL_PRIMARY_SERVICE;
@@ -35,4 +36,13 @@ const struct attm_desc_128 custs1_att_db[CUSTS1_IDX_NB] =
     [SVC1_IDX_CONTROL_POINT_NTF_CFG]    = {(uint8_t*)&att_desc_cfg, ATT_UUID_16_LEN, PERM(RD, ENABLE) | PERM(WR, ENABLE) | PERM(WRITE_REQ, ENABLE) | PERM(WRITE_COMMAND, ENABLE), sizeof(uint16_t), 0, NULL},
     // Control Point Characteristic User Description
     [SVC1_IDX_CONTROL_POINT_USER_DESC]  = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE), sizeof(DEF_SVC1_CONTROL_POINT_USER_DESC) - 1, sizeof(DEF_SVC1_CONTROL_POINT_USER_DESC) - 1, (uint8_t*)DEF_SVC1_CONTROL_POINT_USER_DESC},
+
+    // Audio Characteristic Declaration
+    [SVC1_IDX_AUDIO_CHAR]               = {(uint8_t*)&att_decl_char, ATT_UUID_16_LEN, PERM(RD, ENABLE), 0, 0, NULL},
+    // Audio Characteristic Value — notify only, never read or written
+    [SVC1_IDX_AUDIO_VAL]                = {SVC1_AUDIO_UUID_128, ATT_UUID_128_LEN, PERM(NTF, ENABLE), DEF_SVC1_AUDIO_CHAR_LEN, 0, NULL},
+    // Audio Client Characteristic Configuration Descriptor
+    [SVC1_IDX_AUDIO_NTF_CFG]            = {(uint8_t*)&att_desc_cfg, ATT_UUID_16_LEN, PERM(RD, ENABLE) | PERM(WR, ENABLE) | PERM(WRITE_REQ, ENABLE) | PERM(WRITE_COMMAND, ENABLE), sizeof(uint16_t), 0, NULL},
+    // Audio Characteristic User Description
+    [SVC1_IDX_AUDIO_USER_DESC]          = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE), sizeof(DEF_SVC1_AUDIO_USER_DESC) - 1, sizeof(DEF_SVC1_AUDIO_USER_DESC) - 1, (uint8_t*)DEF_SVC1_AUDIO_USER_DESC},
 };

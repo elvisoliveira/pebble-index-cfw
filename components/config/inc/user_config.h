@@ -48,8 +48,11 @@ static const struct advertise_configuration user_adv_conf = {
 static const struct gapm_configuration user_gapm_conf = {
     .role = GAP_ROLE_PERIPHERAL,
 
-    /// Maximal MTU. 23 for Legacy Pairing, 65 for Secure Connection, more if required
-    .max_mtu = 23,
+    /// Maximal MTU. 23 for Legacy Pairing, 65 for Secure Connection, more if required.
+    /// 247 because the clip transfer lives or dies by it: at the 23-byte default a
+    /// notification carries 20 bytes and a 16 KB clip needs 820 of them; at 247 it
+    /// carries 244 and needs 68. Same radio, twelve times the throughput.
+    .max_mtu = 247,
 
     .addr_type = APP_CFG_ADDR_TYPE(USER_CFG_ADDRESS_MODE),
     /// Duration before regenerating the random private address when privacy is enabled

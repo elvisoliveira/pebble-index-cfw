@@ -64,4 +64,13 @@ uint16_t mic_capture(bool (*keep)(void));
 /* The clip: one ADPCM nibble per sample, low nibble first. */
 const uint8_t *mic_clip(uint16_t *samples);
 
+/*
+ * Fill the clip with a counting ramp instead of audio.
+ *
+ * For proving the transfer without depending on the microphone: a dropped, repeated or
+ * reordered chunk is obvious in a ramp and invisible in audio, where corrupted noise
+ * still looks like noise. Three lines that make the two halves independently testable.
+ */
+void mic_fill_ramp(void);
+
 #endif // MIC_H_

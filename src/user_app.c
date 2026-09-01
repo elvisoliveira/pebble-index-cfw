@@ -24,6 +24,7 @@
 #include <user_app.h>
 #include <led.h>
 #include <mic.h>
+#include <clip_tx.h>
 #include <user_periph_setup.h>   /* por_arm / por_disarm */
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
@@ -441,6 +442,13 @@ static void hold_detected(void)
      * whether the firmware responds at all. */
     por_disarm();
     fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
+
+    /* A transfer is reading the very buffer a recording would overwrite. Refuse rather
+     * than corrupt what is already on its way out; the POR stays disarmed either way,
+     * because the firmware DID see the gesture. */
+    if (clip_tx_busy()) {
+        return;
+    }
     recording = true;
     led_hold(LED_RECORD);          /* stays lit: a pattern would end on its own */
 

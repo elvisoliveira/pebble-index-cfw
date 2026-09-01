@@ -106,6 +106,14 @@ uint16_t mic_capture(bool (*keep)(void))
     return n;
 }
 
+void mic_fill_ramp(void)
+{
+    for (uint16_t i = 0; i < CLIP_BYTES; i++) {
+        clip[i] = (uint8_t)i;
+    }
+    clip_samples = CLIP_SAMPLES;
+}
+
 const uint8_t *mic_clip(uint16_t *samples)
 {
     *samples = clip_samples;

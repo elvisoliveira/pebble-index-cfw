@@ -19,6 +19,7 @@ add_executable(${PROJECT_NAME}
     src/ble_handlers.c
     src/cfw_ctrl.c
     src/led.c
+    src/clip_tx.c
     src/adpcm.c
     src/mic.c
 )
