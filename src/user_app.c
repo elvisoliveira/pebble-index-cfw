@@ -30,6 +30,7 @@
 #include <app_easy_timer.h>
 #include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
+#include <gapc_task.h>              /* struct gapc_disconnect_ind */
 #include <wkupct_quadec.h>
 #include <gpio.h>
 #include <ll.h>             /* GLOBAL_INT_DISABLE / GLOBAL_INT_RESTORE */
@@ -153,6 +154,17 @@ static bool advertising;
 static bool recording;
 
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
+/*
+ * A dropped link mid-transfer used to leave clip_tx believing it was still sending —
+ * refusing every later recording and holding its channel lit, with nothing to clear it.
+ * The stack tells us; it just was not being asked.
+ */
+void user_on_disconnect(struct gapc_disconnect_ind const *param)
+{
+    clip_tx_abort();
+    default_app_on_disconnect(param);
+}
+
 void user_advertise_operation(void)
 {
     advertising = true;
@@ -226,15 +238,10 @@ static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
 static uint8_t fast_clicks;
 static uint8_t click_count; /* advertised counter */
 
-/*
- * The LED is the only feedback a sealed ring can give, so it says which gesture the
- * firmware understood. One channel at a time, never a mix: the ring's firmware speaks
- * in channels and never says which channel is which colour, and a mix cannot answer
- * that — seeing cyan still leaves you guessing which pin made the green. Naming the
- * channels by their job keeps that honest; the colours below are the kit's wiring.
- */
-#define LED_CLICK   (1u << 2)   /* channel C — blue on the kit */
-#define LED_RECORD  (1u << 0)   /* channel A — red on the kit */
+/* The LED is the only feedback a sealed ring can give, so it says what the firmware is
+ * doing. One channel at a time, never a mix: a mix cannot answer which channel is which
+ * colour, and that is the question the LED exists to settle. Meanings live in led.h,
+ * because the transfer lights one too. */
 
 /* A click gets a flash, not a light: two units is 100 ms, long enough to read and
  * short enough that it reads as an acknowledgement rather than a state. Recording is
@@ -462,6 +469,15 @@ static void hold_detected(void)
      * interrupt — and clearing `recording` is what ends the loop below. Advertising the
      * result therefore belongs here, after the count exists, not in the release path. */
     (void)mic_capture(still_recording);
+
+    /* The light goes out when RECORDING ends, which is not the same moment the button
+     * comes up: the buffer holds a few seconds and fills while a finger is still down.
+     * Leaving the release path to do it meant the ring looked like it was still
+     * recording long after it had stopped, with no way to tell. Harmless if the release
+     * already ran — led_off does nothing when nothing is lit. The POR stays disarmed
+     * until the button actually comes up, because a hold should never reset a ring that
+     * is plainly alive. */
+    led_off();
     refresh_clip_count();
     advertise_click(click_count);
     /* Step 2 starts the capture chain here. Until then the LED is the whole feature,
@@ -515,7 +531,11 @@ static void handle_click(void)
             fast_clicks = 0;
         }
     }
-    blink(LED_CLICK);                   /* its own cancel is a no-op: led_cancel led */
+    /* Not while a transfer owns the LED: a 100 ms flash would replace the transfer's
+     * light and leave it dark for the rest of the send, which says something false. */
+    if (!clip_tx_busy()) {
+        blink(LED_CLICK);               /* its own cancel is a no-op: led_cancel led */
+    }
     mic = mic_read();                   /* ~4 ms; goes out with this click's burst */
     refresh_clip_count();               /* a delivered clip must stop being advertised */
     advertise_click(click_count);       /* refresh active burst or start a new one */

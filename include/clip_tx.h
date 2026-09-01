@@ -34,6 +34,13 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk);
 /* A notification completed — send the next chunk. Wired to CUSTS1_VAL_NTF_CFM. */
 void clip_tx_on_sent(uint16_t handle);
 
+/*
+ * Give up on a transfer that will never finish — the link dropped. Without it clip_tx
+ * would stay "busy" forever: refusing every later recording, and holding its channel
+ * lit with nothing left to turn it off.
+ */
+void clip_tx_abort(void);
+
 /* True while a transfer is in flight. Recording refuses during one: the sender is
  * reading the very buffer a new recording would overwrite. */
 bool clip_tx_busy(void);

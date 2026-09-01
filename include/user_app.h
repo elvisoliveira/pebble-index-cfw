@@ -2,6 +2,7 @@
 #define USER_APP_H_
 
 #include <stdint.h>
+#include <gapc_task.h>
 
 void app_on_init(void);
 
@@ -16,6 +17,7 @@ void enter_failsafe(void);
  * .default_operation_adv: it is the one point that sees every advertising start we do
  * not make ourselves, so it is where the "a burst is running" flag belongs. */
 void user_advertise_operation(void);
+void user_on_disconnect(struct gapc_disconnect_ind const *param);
 void user_on_adv_undirect_complete(uint8_t status);
 
 #endif // USER_APP_H_

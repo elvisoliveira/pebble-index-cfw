@@ -3,6 +3,7 @@
 
 #if defined(WITH_CTRL_POINT)
 #include <mic.h>
+#include <led.h>
 #include <user_custs1_def.h>
 #include <custs1_task.h>
 #include <prf.h>
@@ -42,6 +43,7 @@ static void send_next(void)
     if (left == 0) {
         const uint8_t done = CMD_DONE;
         active = false;
+        led_off();
         /* Released only here, after every chunk was confirmed — so the advertisement
          * stops offering a clip that has already been taken, and a transfer that dies
          * halfway leaves the recording intact to be asked for again. */
@@ -79,6 +81,8 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk)
     sent      = 0;
     active    = true;
 
+    led_hold(LED_TRANSFER);     /* lit for the whole send, dark when it ends either way */
+
     const uint8_t hdr[3] = { CMD_SEND, (uint8_t)samples, (uint8_t)(samples >> 8) };
     notify(SVC1_IDX_CONTROL_POINT_VAL, hdr, sizeof hdr);
     /* The first chunk waits for THIS notification's confirmation, so the header and the
@@ -94,6 +98,14 @@ void clip_tx_on_sent(uint16_t handle)
      * chunk, each chunk's releases the next. */
     if (handle == SVC1_IDX_CONTROL_POINT_VAL || handle == SVC1_IDX_AUDIO_VAL) {
         send_next();
+    }
+}
+
+void clip_tx_abort(void)
+{
+    if (active) {
+        active = false;
+        led_off();
     }
 }
 

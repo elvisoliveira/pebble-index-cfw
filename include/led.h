@@ -24,6 +24,15 @@
  */
 #include <stdint.h>
 
+/*
+ * What each channel MEANS. Named by job rather than by colour because which channel is
+ * which colour on a ring is still unknown — the firmware only ever speaks in channels,
+ * and the LED itself is what will answer it. On the kit they are red, green, blue.
+ */
+#define LED_RECORD       (1u << 0)   /* channel A — recording in progress */
+#define LED_TRANSFER     (1u << 1)   /* channel B — sending a clip to the phone */
+#define LED_CLICK        (1u << 2)   /* channel C — a click was counted */
+
 #define LED_CHANNELS     3
 #define LED_PATTERN_MAX  25   /* the ring's own cap (FUN_07fc4e1c rejects >= 26) */
 #define LED_UNIT_MS      50   /* one duration unit */
