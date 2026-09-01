@@ -8,7 +8,6 @@
 #include <arch_wdg.h>
 #include <board_config.h>   /* BTN_PORT/BTN_PIN — ring vs kit (TARGET_KIT) */
 #include <led.h>
-#include <board_config.h>
 
 static void set_pad_functions(void)
 {

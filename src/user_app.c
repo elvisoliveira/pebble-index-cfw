@@ -75,7 +75,7 @@ static void button_rearm(void)
  * the name on the first click (still findable by address, gone from name-based
  * scans). So we emit both AD structures together every time.
  */
-#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + mic pp(2) + mic dc(2) */
+#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + mic pp(2) + clip samples(2) */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
 
 _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
@@ -150,8 +150,10 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 static bool advertising;
 
 /* Set while a hold is being served. Declared here because the burst-end handler reads
- * it, and that sits above the gesture code that owns it. */
-static bool recording;
+ * it, and that sits above the gesture code that owns it. volatile because the capture
+ * loop polls it (via still_recording) while the release ISR clears it — today the
+ * cross-module call forces the reload anyway, but LTO would quietly stop that. */
+static volatile bool recording;
 
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
 /*
@@ -450,6 +452,21 @@ static void hold_detected(void)
 {
     hold_timer = EASY_TIMER_INVALID_TIMER;
 
+    /* The release can land in the dispatch window before this callback's first line —
+     * and it settles the press as a CLICK (recording still false), so recording here
+     * would capture with no finger on the button until the buffer filled. The pin
+     * answers: up means the click path already ran. Checked and set under one guard so
+     * a release cannot slip between the two; one landing just after clears `recording`
+     * again and the refusal below turns the stale hold into a no-op. */
+    bool held;   /* outside the guard: DISABLE/RESTORE are a brace pair, its own scope */
+    GLOBAL_INT_DISABLE();
+    held = GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0;   /* active-low */
+    recording = held && !clip_tx_busy();
+    GLOBAL_INT_RESTORE();
+    if (!held) {
+        return;
+    }
+
     /* Disarmed because the gesture was SEEN, not because a recording succeeded. A
      * legitimate refusal to record must never reboot the device; what the POR tests is
      * whether the firmware responds at all. */
@@ -458,11 +475,11 @@ static void hold_detected(void)
 
     /* A transfer is reading the very buffer a recording would overwrite. Refuse rather
      * than corrupt what is already on its way out; the POR stays disarmed either way,
-     * because the firmware DID see the gesture. */
-    if (clip_tx_busy()) {
+     * because the firmware DID see the gesture. (Also the exit for a release that raced
+     * the guard above.) */
+    if (!recording) {
         return;
     }
-    recording = true;
     led_hold(LED_RECORD);          /* stays lit: a pattern would end on its own */
 
     /* Blocks here for the whole recording. The release interrupt still runs — it is an
@@ -523,8 +540,9 @@ static void handle_click(void)
              * ponytail: under SUSTAINED exhaustion this disables the gesture outright,
              *           because the reset only ever lands on clicks 1-4 (the fifth
              *           allocates nothing). Acceptable while exhaustion stays a
-             *           transient: the pool is 10, a click holds at most a gap timer, an
-             *           LED timer and the SDK's adv timer, and the scheduler drains
+             *           transient: the pool is 10, a press-and-release holds at most a
+             *           hold timer, a gap timer, an LED timer and the SDK's adv timer,
+             *           and the scheduler drains
              *           cancelled slots between clicks. If it ever stops being
              *           transient, keep the count at CLICKS_TO_FAILSAFE - 1 instead of
              *           special-casing anything earlier. */
@@ -577,6 +595,10 @@ static void on_wakeup(void)
     led_cancel();
     if (hold_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(hold_timer);
     hold_timer = app_easy_timer(HOLD_TICKS, hold_detected);
+    /* ponytail: unchecked on purpose. With the pool exhausted there is no hold
+     *           detection, so the POR stays armed and a long hold becomes the silicon
+     *           reset at ~5 s — the right failure for a ring too wedged to run timers.
+     *           A tap is still a click via the release path below. */
     button_rearm();
 
     if (!armed_for_release) {

@@ -65,6 +65,10 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk)
     if (active) {
         return;
     }
+    /* No recording can be running here TODAY: mic_capture blocks the task context this
+     * write arrives in, so the two cannot overlap. The day capture goes DMA and stops
+     * blocking, that protection evaporates — add a recording check here, or this walks
+     * a buffer being overwritten. */
     clip = mic_clip(&samples);
     if (samples == 0) {
         return;

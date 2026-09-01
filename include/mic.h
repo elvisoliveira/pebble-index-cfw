@@ -18,9 +18,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
- * either board, and scaling or thresholding would bake in a guess before the bench has
- * produced one. */
 /*
  * The clip's sample rate, and the rate the converter actually runs at.
  *
@@ -37,6 +34,9 @@
 #define MIC_SAMPLE_RATE_HZ  8000
 #define MIC_SOURCE_RATE_HZ  11000
 
+/* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
+ * either board, and scaling or thresholding would bake in a guess before the bench has
+ * produced one. */
 typedef struct {
     uint16_t pp;   /* peak-to-peak: how much the signal moved */
     uint16_t dc;   /* mean: where it sits */
