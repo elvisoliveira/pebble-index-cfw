@@ -57,6 +57,18 @@ void led_off(void);
  * led_off would also work there, but reads as removable darkness code — this cannot. */
 void led_cancel(void);
 
+/*
+ * Light channels and leave them lit, until led_off() or the next led_play().
+ *
+ * Not expressible as a pattern, and that is the point: a pattern always ends, because
+ * every step has a duration and the last one hands over to the terminator. Recording
+ * lasts as long as a finger is on the button, which is not a duration this format can
+ * hold — the longest single step is 31 units, 1.55 s. Reaching for led_play with a
+ * maximum-length step LOOKS like a solid light and silently goes dark after those
+ * 1.55 s.
+ */
+void led_hold(uint8_t channels);
+
 /* Re-drive the lit channels after an extended-sleep wake. Call from periph_init (via
  * set_pad_functions), not from app_on_init: the GPIO configuration does not survive
  * extended sleep, and periph_init is what runs on every wake. */

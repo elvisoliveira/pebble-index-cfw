@@ -4,6 +4,8 @@
 #include <board_config.h>
 #include <gpio.h>
 #include <arch.h>           /* arch_asm_delay_us */
+#include <adpcm.h>
+#include <arch_wdg.h>       /* wdg_reload during the capture loop */
 
 /*
  * One burst. 64 conversions at 64x oversampling is about 4 ms, which spans a couple of
@@ -56,4 +58,56 @@ mic_reading_t mic_read(void)
 #endif
     mic_reading_t r = { .pp = hi - lo, .dc = (uint16_t)(sum / MIC_BURST) };
     return r;
+}
+
+
+/*
+ * The clip. 16 KB of nibbles is 32768 samples — a few seconds, and it leaves the free
+ * RAM above .bss with room to spare rather than claiming all of it.
+ */
+#define CLIP_BYTES   (16 * 1024)
+#define CLIP_SAMPLES (CLIP_BYTES * 2)
+
+static uint8_t clip[CLIP_BYTES];
+static uint16_t clip_samples;
+
+uint16_t mic_capture(bool (*keep)(void))
+{
+#ifdef MIC_HAS_PWR_PIN
+    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, true);
+    arch_asm_delay_us(MIC_PWR_SETTLE_US);
+#endif
+    adpcm_state_t st;
+    adpcm_reset(&st);
+    adc_init(&mic_cfg);
+
+    uint16_t n = 0;
+    while (n < CLIP_SAMPLES && keep()) {
+        /* The ADC is unsigned around mid-scale; ADPCM wants a signed swing about zero. */
+        uint8_t nibble = adpcm_encode(&st, (int16_t)(adc_get_sample() - 32768));
+
+        uint8_t *slot = &clip[n >> 1];
+        *slot = (n & 1) ? (uint8_t)(*slot | (nibble << 4)) : nibble;
+        n++;
+
+        /* Nothing else runs while this loop does, the main loop included — so the
+         * watchdog has to be fed from here or it fires mid-recording and takes the NMI
+         * path into the failsafe. Every 256 samples is far inside its ~2 s. */
+        if ((n & 0xFF) == 0) {
+            wdg_reload(WATCHDOG_DEFAULT_PERIOD);
+        }
+    }
+
+    adc_disable();
+#ifdef MIC_HAS_PWR_PIN
+    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, false);
+#endif
+    clip_samples = n;
+    return n;
+}
+
+const uint8_t *mic_clip(uint16_t *samples)
+{
+    *samples = clip_samples;
+    return clip;
 }

@@ -84,6 +84,10 @@ _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
  * and ignores the rest — is unaffected. Any BLE scanner shows it. */
 static mic_reading_t mic;
 
+/* Samples in the last completed recording. Rides in the advertisement because it is
+ * also the sample-rate measurement: hold for a known number of seconds and divide. */
+static uint16_t clip_samples;
+
 static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 {
     adv[0] = ADV_MFR_LEN - 1;   /* length of this AD structure */
@@ -93,8 +97,8 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
     adv[4] = counter;           /* the click counter the phone watches */
     adv[5] = (uint8_t)mic.pp;         /* microphone peak-to-peak, LSB */
     adv[6] = (uint8_t)(mic.pp >> 8);  /*                            MSB */
-    adv[7] = (uint8_t)mic.dc;         /* microphone mean,           LSB */
-    adv[8] = (uint8_t)(mic.dc >> 8);  /*                            MSB */
+    adv[7] = (uint8_t)clip_samples;        /* samples in the last clip, LSB */
+    adv[8] = (uint8_t)(clip_samples >> 8); /*                           MSB */
     adv[9] = USER_DEVICE_NAME_LEN + 1;
     adv[10] = GAP_AD_TYPE_COMPLETE_NAME;
     memcpy(&adv[11], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
@@ -137,6 +141,10 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
  */
 static bool advertising;
 
+/* Set while a hold is being served. Declared here because the burst-end handler reads
+ * it, and that sits above the gesture code that owns it. */
+static bool recording;
+
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
 void user_advertise_operation(void)
 {
@@ -169,10 +177,17 @@ void user_on_adv_undirect_complete(uint8_t status)
      * have that blink cancelled and darkened by the led_off() below. */
     GLOBAL_INT_DISABLE();
     advertising = false;
-    led_off();      /* never sleep with a channel lit: the pad latch holds it high
-                     * through extended sleep, burning ~3 mA until the next click. */
+    /* Never sleep with a channel lit — the pad latch holds it high through extended
+     * sleep, burning ~3 mA until the next click. A recording is the one case where a
+     * lit channel is deliberate and outlives its burst, and it is also a case that must
+     * not sleep at all, since the capture needs the peripherals running. Cutting the
+     * LED here unconditionally is what made the recording light go out after BURST_TU:
+     * the light was not failing, a three-second timer was ending. */
+    if (!recording) {
+        led_off();
+    }
     GLOBAL_INT_RESTORE();
-    arch_set_sleep_mode(app_default_sleep_mode);
+    arch_set_sleep_mode(recording ? ARCH_SLEEP_OFF : app_default_sleep_mode);
 }
 
 /*
@@ -214,14 +229,10 @@ static uint8_t click_count; /* advertised counter */
 #define LED_CLICK   (1u << 2)   /* channel C — blue on the kit */
 #define LED_RECORD  (1u << 0)   /* channel A — red on the kit */
 
-/* One step at its longest: 31 x 50 ms = 1.55 s, the most the ring's own format
- * expresses without a second step. Long enough to read the colour comfortably.
- *
- * A late click IS cut short, and that is fine: advertise_click() does not restart
- * BURST_TU while a burst is already running, so a click 2.5 s into a 3 s burst gets
- * ~0.5 s of light before the burst-end led_off(). The assert below only guarantees
- * the blink fits a burst it starts. */
-#define BLINK_UNITS  LED_STEP_DUR_MASK
+/* A click gets a flash, not a light: two units is 100 ms, long enough to read and
+ * short enough that it reads as an acknowledgement rather than a state. Recording is
+ * the thing that holds a channel lit, and the two should not look alike. */
+#define BLINK_UNITS  2
 
 _Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) <= BURST_TU,
                "a blink that starts a burst must fit in it, or led_off() always truncates");
@@ -229,14 +240,6 @@ _Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) <= BURST_TU,
 static void blink(uint8_t channel)
 {
     const uint8_t pattern[] = { LED_STEP(channel, BLINK_UNITS), 0x00 };
-    led_play(pattern, sizeof pattern);
-}
-
-/* Recording holds a channel lit for as long as it lasts, so it is a raw set, not a
- * pattern with a duration — nothing schedules it off but the release. */
-static void led_solid(uint8_t channel)
-{
-    const uint8_t pattern[] = { LED_STEP(channel, LED_STEP_DUR_MASK), 0x00 };
     led_play(pattern, sizeof pattern);
 }
 
@@ -409,13 +412,25 @@ static void click_reset(void)
  * counting, and the chip reboots at ~5 s. One gesture, and the right thing happens in
  * both states with nothing for the user to remember.
  *
- * HOLD_TICKS must stay comfortably under the POR's ~5 s (see por_arm) so healthy
- * firmware always disarms first.
+ * HOLD_TICKS is an ergonomics constant, not a derived one: it has to feel instant on a
+ * deliberate hold while staying clear of a tap, which people do in 50-150 ms. 300 ms is
+ * the starting point; it can only really be settled by feel on hardware, so it is one
+ * number in one place. It cannot go to zero — the red can only appear once the firmware
+ * KNOWS the press is a hold, and lighting it on the press instead would put a red
+ * flicker in front of every click and blur the two gestures again.
+ *
+ * It must also stay comfortably under the POR's ~5 s (see por_arm) so healthy firmware
+ * always disarms first.
  */
-#define HOLD_TICKS 100                  /* 1 s, in 10 ms timer units */
+#define HOLD_TICKS 50                   /* 500 ms, in 10 ms timer units */
 
 static timer_hnd hold_timer = EASY_TIMER_INVALID_TIMER;
-static bool recording;
+
+/* The capture loop's stop signal: the release interrupt clears `recording`. */
+static bool still_recording(void)
+{
+    return recording;
+}
 
 static void hold_detected(void)
 {
@@ -427,7 +442,13 @@ static void hold_detected(void)
     por_disarm();
     fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
     recording = true;
-    led_solid(LED_RECORD);
+    led_hold(LED_RECORD);          /* stays lit: a pattern would end on its own */
+
+    /* Blocks here for the whole recording. The release interrupt still runs — it is an
+     * interrupt — and clearing `recording` is what ends the loop below. Advertising the
+     * result therefore belongs here, after the count exists, not in the release path. */
+    clip_samples = mic_capture(still_recording);
+    advertise_click(click_count);
     /* Step 2 starts the capture chain here. Until then the LED is the whole feature,
      * which is the point: the gesture machine gets proven on its own. */
 }
@@ -509,7 +530,8 @@ static void on_wakeup(void)
             recording = false;
             led_off();
             por_arm();                  /* the net is back before the button is idle */
-            button_rearm();
+            arch_set_sleep_mode(app_default_sleep_mode);   /* held off while recording */
+            button_rearm();                 /* hold_detected advertises once its loop ends */
             return;
         }
         handle_click();                 /* it did not: a click */

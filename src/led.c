@@ -150,6 +150,14 @@ void led_play(const uint8_t *steps, uint8_t len)
     GLOBAL_INT_RESTORE();
 }
 
+void led_hold(uint8_t channels)
+{
+    GLOBAL_INT_DISABLE();
+    led_stop();                         /* no pattern owns the LED any more */
+    led_set(channels & LED_CH_MASK);    /* and nothing is scheduled to end this */
+    GLOBAL_INT_RESTORE();
+}
+
 void led_off(void)
 {
     GLOBAL_INT_DISABLE();

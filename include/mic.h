@@ -15,6 +15,7 @@
  * porting, and none of it is needed to answer the first question — does the microphone
  * hear anything — which one polled burst answers with a fortieth of the code.
  */
+#include <stdbool.h>
 #include <stdint.h>
 
 /* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
@@ -39,5 +40,28 @@ typedef struct {
  * leaves it off again.
  */
 mic_reading_t mic_read(void);
+
+/*
+ * Record until told to stop, ADPCM-encoded as it goes.
+ *
+ * A blocking poll loop, which is the whole simplification: adc_get_sample() already
+ * converts and waits, mic_read() already proves it works, and this is that loop run
+ * long instead of 64 times. The conversion time sets the rate — deterministic, so it
+ * can be measured once and written down.
+ *
+ * What was tried and does NOT work: the ADC's own continuous mode. Without an interval
+ * it does not sustain conversions at all (a five-second hold produced three samples),
+ * and the interval register's resolution is 1.024 ms, capping it near 976 Hz. That is
+ * why the stock firmware clocks conversions from UART2 in internal loopback through
+ * three DMA channels — not cleverness for its own sake, but the only way to get an
+ * audio rate out of this ADC. Adopt it when capture has to share the chip with a live
+ * radio; this loop cannot, since it blocks everything including BLE.
+ *
+ * keep() is polled every sample and ends the recording when it returns false.
+ */
+uint16_t mic_capture(bool (*keep)(void));
+
+/* The clip: one ADPCM nibble per sample, low nibble first. */
+const uint8_t *mic_clip(uint16_t *samples);
 
 #endif // MIC_H_
