@@ -1,0 +1,43 @@
+#ifndef MIC_H_
+#define MIC_H_
+
+/*
+ * Microphone — the ring has an analog MEMS on P0_7, read by the GP_ADC.
+ *
+ * NOT a PDM part: the DA14535 has no audio peripheral at all (the SDK's PDM driver is
+ * `#if !defined (__DA14531__)`, and the GPIO function enum has no PDM or PCM entry).
+ * The stock app converts single-ended on channel 3 with the 2x attenuator, chopping on
+ * and 64x oversampling — see board_config.h for which of those differ per board.
+ *
+ * What is here is a LEVEL, not a recording. The stock firmware streams continuously at
+ * 10 kHz by putting UART2 in internal loopback and chaining three DMA channels, so the
+ * character rate clocks the conversions and no CPU runs between samples. That is worth
+ * porting, and none of it is needed to answer the first question — does the microphone
+ * hear anything — which one polled burst answers with a fortieth of the code.
+ */
+#include <stdint.h>
+
+/* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
+ * either board, and scaling or thresholding would bake in a guess before the bench has
+ * produced one. */
+typedef struct {
+    uint16_t pp;   /* peak-to-peak: how much the signal moved */
+    uint16_t dc;   /* mean: where it sits */
+} mic_reading_t;
+
+/*
+ * Take a burst and report both numbers.
+ *
+ * dc is what tells a dead signal path from a live-but-flat one, and they need very
+ * different fixes. A MAX9814 rests at a fixed 1.25 V, which under the kit's 3x
+ * attenuator is about 30300 counts; the ring's MEMS rests near mid-rail. A dc of
+ * roughly zero means nothing is arriving at the pin — wiring, power, the wrong pad.
+ * A plausible dc with a tiny pp means the signal is there and something is flattening
+ * it, which on the kit is the AGC's job description (see board_config.h on the AR pin).
+ *
+ * Blocks for roughly 4 ms. Powers the microphone on the ring for the duration and
+ * leaves it off again.
+ */
+mic_reading_t mic_read(void);
+
+#endif // MIC_H_

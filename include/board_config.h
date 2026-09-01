@@ -16,6 +16,7 @@
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
  *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_6 (J4 "PWM"/"SDA"/"RX")
  *   microphone in      P0_7                    P0_7 (J3 "CS") — same pin on both
+ *   microphone power   P0_3 driven HIGH        none (bench module runs off J3 "3V3")
  *
  * The pin numbers were read out of the ring's own factory firmware (2026-08-10), not
  * guessed. DC-DC is NOT here: periph_init auto-detects buck->boost, same code both boards.
@@ -25,6 +26,7 @@
 #define BTN_PORT     GPIO_PORT_0
 #define FLASH_PORT   GPIO_PORT_0
 #define LED_PORT     GPIO_PORT_0
+#define MIC_PORT     GPIO_PORT_0
 
 #ifdef TARGET_KIT
     /* P0_11 is SW2's pin (bench-validated 2026-08-27: the counter tracked clicks 1:1).
@@ -55,6 +57,18 @@
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
     #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" — same channel, same pin as the ring */
     #define LED_C_PIN      GPIO_PIN_6   /* J4 "RX"  */
+    /* Microphone: a MAX9814 module on J3 "3V3"/GND, output into P0_7. It biases its
+     * output at a FIXED 1.25 V and caps the swing at 2 Vpp, so the signal lives in
+     * 0.25-2.25 V — outside the ring's 0-1.8 V window, hence the wider attenuator. It
+     * needs no enable pin here: the module is powered whenever the board is.
+     *
+     * Its Gain and AR pins are both left floating: 60 dB, and the middle attack/release
+     * ratio. AR is the knob to reach for if a level reads the same talking as silent —
+     * mic_level's burst is about 4 ms, the same order as the AGC's own time constants,
+     * so a fast release lets the AGC compress the signal WHILE it is being measured.
+     * That is the module fighting the measurement, not a dead microphone. The ring has
+     * no AGC at all, which is the deeper reason these two are not the same instrument. */
+    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_3X   /* 0-2.7 V */
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */
@@ -88,6 +102,22 @@
     #define LED_A_PIN      GPIO_PIN_2   /* ⚠ also SWDIO/SWCLK */
     #define LED_B_PIN      GPIO_PIN_8
     #define LED_C_PIN      GPIO_PIN_10  /* ⚠ also SWDIO/SWCLK */
+    /* Microphone: the analog MEMS marked R61E G31H, powered from P0_3 and read on P0_7.
+     * The stock app drives P0_3 high, waits 50 us and converts; the 2x attenuator's
+     * 0-1.8 V window is exactly the rail the mic runs on, so an analog MEMS sitting at
+     * mid-rail lands mid-scale. Both numbers are the ring's own choices, read out of
+     * app v3.74 (its adc_config template at 0x07fc6b34). */
+    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_2X   /* 0-1.8 V */
+    #define MIC_HAS_PWR_PIN
+    #define MIC_PWR_PIN    GPIO_PIN_3
+    #define MIC_PWR_SETTLE_US 50
 #endif
+
+/* The ADC input is the ONE thing the microphone does not differ on: P0_7 is single-ended
+ * channel 3 on both boards. Kept out of the branches above so that stays visible.
+ *
+ * These expand to adc.h enums, so only a file that includes <adc.h> may use them —
+ * mic.c does, and nothing else needs to. */
+#define MIC_ADC_INPUT      ADC_INPUT_SE_P0_7
 
 #endif // BOARD_CONFIG_H_

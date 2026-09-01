@@ -23,6 +23,7 @@
 #include <board_config.h>   /* BTN_PIN/PORT + FLASH_* pins — ring vs kit (TARGET_KIT) */
 #include <user_app.h>
 #include <led.h>
+#include <mic.h>
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
 #include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
@@ -71,22 +72,31 @@ static void button_rearm(void)
  * the name on the first click (still findable by address, gone from name-based
  * scans). So we emit both AD structures together every time.
  */
-#define ADV_MFR_LEN  5   /* len + type + company(2) + counter */
+#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + mic pp(2) + mic dc(2) */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
 
 _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
                "USER_DEVICE_NAME too long: advertisement would overflow");
 
+/* Peak-to-peak of the last microphone burst, raw ADC counts, measured at the click that
+ * started this burst. Appended AFTER the counter, so the phone — which reads payload[0]
+ * and ignores the rest — is unaffected. Any BLE scanner shows it. */
+static mic_reading_t mic;
+
 static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 {
-    adv[0] = 0x04;              /* length of this AD structure */
+    adv[0] = ADV_MFR_LEN - 1;   /* length of this AD structure */
     adv[1] = 0xFF;              /* manufacturer specific data */
     adv[2] = 0xFF;              /* company id 0xFFFF (dev/unassigned), LSB */
     adv[3] = 0xFF;              /*                                    MSB */
     adv[4] = counter;           /* the click counter the phone watches */
-    adv[5] = USER_DEVICE_NAME_LEN + 1;
-    adv[6] = GAP_AD_TYPE_COMPLETE_NAME;
-    memcpy(&adv[7], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
+    adv[5] = (uint8_t)mic.pp;         /* microphone peak-to-peak, LSB */
+    adv[6] = (uint8_t)(mic.pp >> 8);  /*                            MSB */
+    adv[7] = (uint8_t)mic.dc;         /* microphone mean,           LSB */
+    adv[8] = (uint8_t)(mic.dc >> 8);  /*                            MSB */
+    adv[9] = USER_DEVICE_NAME_LEN + 1;
+    adv[10] = GAP_AD_TYPE_COMPLETE_NAME;
+    memcpy(&adv[11], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
     return ADV_MFR_LEN + ADV_NAME_LEN;
 }
 
@@ -448,6 +458,7 @@ static void on_wakeup(void)
         }
     }
     blink_random_colour();              /* its own cancel is a no-op: led_cancel led */
+    mic = mic_read();                   /* ~4 ms; goes out with this click's burst */
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();                     /* still held -> wait for release; already up -> next press */
 }
