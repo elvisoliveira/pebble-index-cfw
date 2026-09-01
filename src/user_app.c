@@ -153,8 +153,9 @@ static bool advertising;
  * it, and that sits above the gesture code that owns it. volatile because the capture
  * loop polls it (via still_recording) while the release ISR clears it — and this build
  * links with -flto (CMakeLists), so the cross-module call is NO barrier: the call can
- * inline, the read can hoist out of the loop, and a recording would never end. The
- * volatile is the only thing forcing the reload. */
+ * inline and the read can hoist out of the loop, leaving `n < CLIP_SAMPLES` as the only
+ * exit left — every hold would record the full buffer and releasing early would no
+ * longer end it. The volatile is the only thing forcing the reload. */
 static volatile bool recording;
 
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
@@ -477,7 +478,8 @@ static void hold_detected(void)
      * again and the ring sits net-off with the button up until the next wake re-arms
      * it (which is why the arm lives in set_pad_functions). Chosen over moving the
      * disarm below the refusal, which would close that sliver by breaking the rule
-     * this comment states. */
+     * this comment states. Same stale pass, same sliver: the reset below also eats a
+     * rapid-click run in progress, since the press was consumed as a hold. */
     por_disarm();
     fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
 
