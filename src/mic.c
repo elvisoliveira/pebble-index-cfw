@@ -114,6 +114,11 @@ void mic_fill_ramp(void)
     clip_samples = CLIP_SAMPLES;
 }
 
+void mic_clip_release(void)
+{
+    clip_samples = 0;
+}
+
 const uint8_t *mic_clip(uint16_t *samples)
 {
     *samples = clip_samples;

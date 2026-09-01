@@ -42,6 +42,10 @@ static void send_next(void)
     if (left == 0) {
         const uint8_t done = CMD_DONE;
         active = false;
+        /* Released only here, after every chunk was confirmed — so the advertisement
+         * stops offering a clip that has already been taken, and a transfer that dies
+         * halfway leaves the recording intact to be asked for again. */
+        mic_clip_release();
         notify(SVC1_IDX_CONTROL_POINT_VAL, &done, 1);
         return;
     }

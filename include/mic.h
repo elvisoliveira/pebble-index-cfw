@@ -65,6 +65,17 @@ uint16_t mic_capture(bool (*keep)(void));
 const uint8_t *mic_clip(uint16_t *samples);
 
 /*
+ * Drop the clip once it has been delivered.
+ *
+ * This is what makes "samples > 0" mean "there is audio you have not taken" rather than
+ * merely "there is audio", and that difference is the whole of the phone's logic: it can
+ * fetch on sight instead of guessing whether the clip in the advertisement is one it
+ * already has. Comparing sample counts would not do — two recordings of the same length
+ * are indistinguishable.
+ */
+void mic_clip_release(void);
+
+/*
  * Fill the clip with a counting ramp instead of audio.
  *
  * For proving the transfer without depending on the microphone: a dropped, repeated or

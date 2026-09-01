@@ -85,9 +85,15 @@ _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
  * and ignores the rest — is unaffected. Any BLE scanner shows it. */
 static mic_reading_t mic;
 
-/* Samples in the last completed recording. Rides in the advertisement because it is
- * also the sample-rate measurement: hold for a known number of seconds and divide. */
+/* Samples in the clip the ring is HOLDING — not in the last one recorded. It reads back
+ * from mic rather than being remembered here, so that a delivered clip stops being
+ * advertised: the phone treats non-zero as "audio you have not taken yet". */
 static uint16_t clip_samples;
+
+static void refresh_clip_count(void)
+{
+    (void)mic_clip(&clip_samples);
+}
 
 static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 {
@@ -455,7 +461,8 @@ static void hold_detected(void)
     /* Blocks here for the whole recording. The release interrupt still runs — it is an
      * interrupt — and clearing `recording` is what ends the loop below. Advertising the
      * result therefore belongs here, after the count exists, not in the release path. */
-    clip_samples = mic_capture(still_recording);
+    (void)mic_capture(still_recording);
+    refresh_clip_count();
     advertise_click(click_count);
     /* Step 2 starts the capture chain here. Until then the LED is the whole feature,
      * which is the point: the gesture machine gets proven on its own. */
@@ -510,6 +517,7 @@ static void handle_click(void)
     }
     blink(LED_CLICK);                   /* its own cancel is a no-op: led_cancel led */
     mic = mic_read();                   /* ~4 ms; goes out with this click's burst */
+    refresh_clip_count();               /* a delivered clip must stop being advertised */
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();
 }
