@@ -65,7 +65,10 @@ mic_reading_t mic_read(void)
  * The clip. 16 KB of nibbles is 32768 samples — a few seconds, and it leaves the free
  * RAM above .bss with room to spare rather than claiming all of it.
  */
-#define CLIP_BYTES   (16 * 1024)
+/* 24 KB is as far as this goes: the map puts 13.5 KB between .bss and __StackLimit, and
+ * spending all of it would leave the stack no room — an overrun there is silent
+ * corruption at runtime, not a link error. 8 KB more buffer, 5.6 KB still free. */
+#define CLIP_BYTES   (24 * 1024)
 #define CLIP_SAMPLES (CLIP_BYTES * 2)
 
 static uint8_t clip[CLIP_BYTES];
@@ -81,10 +84,27 @@ uint16_t mic_capture(bool (*keep)(void))
     adpcm_reset(&st);
     adc_init(&mic_cfg);
 
-    uint16_t n = 0;
+    uint16_t n = 0;         /* samples STORED, at MIC_SAMPLE_RATE_HZ */
+    int32_t sum = 0;        /* the running mean that stands in for a low-pass filter */
+    uint16_t count = 0;
+    uint16_t phase = 0;
+
     while (n < CLIP_SAMPLES && keep()) {
         /* The ADC is unsigned around mid-scale; ADPCM wants a signed swing about zero. */
-        uint8_t nibble = adpcm_encode(&st, (int16_t)(adc_get_sample() - 32768));
+        sum += (int16_t)(adc_get_sample() - 32768);
+        count++;
+
+        /* Bresenham on the two rates: emit whenever the output clock has caught up with
+         * the input one, which spreads the kept samples evenly instead of bunching them. */
+        phase += MIC_SAMPLE_RATE_HZ;
+        if (phase < MIC_SOURCE_RATE_HZ) {
+            continue;
+        }
+        phase -= MIC_SOURCE_RATE_HZ;
+
+        uint8_t nibble = adpcm_encode(&st, (int16_t)(sum / (int32_t)count));
+        sum = 0;
+        count = 0;
 
         uint8_t *slot = &clip[n >> 1];
         *slot = (n & 1) ? (uint8_t)(*slot | (nibble << 4)) : nibble;
