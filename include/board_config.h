@@ -14,6 +14,7 @@
  *                                              with it and both work
  *   flash CS/CLK/DO/DI  P0_9/P0_0/P0_6/P0_11    P0_1/P0_4/P0_0/P0_3 (the kit's own AT25XE021A)
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
+ *                      (P0_3 is really the mic's VCC — see the ring branch below)
  *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_6 (J4 "PWM"/"SDA"/"RX")
  *   microphone in      P0_7                    P0_7 (J3 "CS") — same pin on both
  *   microphone power   P0_3 driven HIGH        none (bench module runs off J3 "3V3")
@@ -75,9 +76,16 @@
     #define FLASH_CLK_PIN  GPIO_PIN_0   /* SPI CLK — FUNC_SPI_CLK */
     #define FLASH_DO_PIN   GPIO_PIN_6   /* SPI DO  — FUNC_SPI_DO */
     #define FLASH_DI_PIN   GPIO_PIN_11  /* SPI DI  — FUNC_SPI_DI */
-    #define FLASH_HAS_PWR_PINS          /* ring: drive P0_4/P0_3 HIGH to power the flash */
-    #define FLASH_PWR1_PIN GPIO_PIN_4
-    #define FLASH_PWR2_PIN GPIO_PIN_3
+    /* Power enables the stock app raises before touching the flash. P0_4 is the flash's
+     * own VCC; P0_3 is the MICROPHONE's (2026-08-28, from the stock app's refcounted
+     * rail: 0=LED at 3.0 V, 1=flash at 1.8 V, 2=mic at 1.8 V) — it is listed here
+     * because the stock app raises it too, and raising a microphone to read flash costs
+     * nothing. Kept rather than dropped so this matches what the ring's own code does;
+     * if it is ever dropped, note that mic_read() drives P0_3 LOW after every click, so
+     * flash_on() would then be the only thing putting it back. */
+    #define FLASH_HAS_PWR_PINS
+    #define FLASH_PWR1_PIN GPIO_PIN_4   /* flash VCC */
+    #define FLASH_PWR2_PIN GPIO_PIN_3   /* mic VCC — same pin as MIC_PWR_PIN below */
     /* RGB LED, read out of the stock app v3.74 (FUN_07fc4f20 drives exactly these three
      * as GPIO, HIGH to light). Which channel is which colour is NOT known: the firmware
      * only ever speaks in channels. Lighting one at a time on a real ring settles it.
@@ -103,11 +111,22 @@
     #define LED_B_PIN      GPIO_PIN_8
     #define LED_C_PIN      GPIO_PIN_10  /* ⚠ also SWDIO/SWCLK */
     /* Microphone: the analog MEMS marked R61E G31H, powered from P0_3 and read on P0_7.
-     * The stock app drives P0_3 high, waits 50 us and converts; the 2x attenuator's
-     * 0-1.8 V window is exactly the rail the mic runs on, so an analog MEMS sitting at
-     * mid-rail lands mid-scale. Both numbers are the ring's own choices, read out of
-     * app v3.74 (its adc_config template at 0x07fc6b34). */
-    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_2X   /* 0-1.8 V */
+     * The stock app drives P0_3 high, waits 50 us and converts — both numbers read out
+     * of app v3.74 (its adc_config template at 0x07fc6b34), and both kept here.
+     *
+     * The attenuator is the one number NOT copied from the ring, and the reason is the
+     * rail. A pad's HIGH is VBAT_HIGH, so P0_3 hands the microphone whatever the DC-DC
+     * is holding; the stock app refcounts that rail and drops it to 1.8 V for the mic,
+     * which is what makes its 0-1.8 V window exactly right. This CFW does not refcount
+     * — periph_init brings the DC-DC up once and leaves it, at 3.0 V in boost (see
+     * led.c, where the LED is why). A 3.0 V rail puts the MEMS at rest near 1.5 V, or
+     * 83% of a 1.8 V scale, with 0.3 V of headroom left above it: the positive half of
+     * every waveform clipped at the rail.
+     *
+     * 0-3.6 V costs one bit of resolution and buys independence from the rail: the
+     * mic rests mid-window whether VBAT_HIGH is 1.8 V or 3.0 V, so this stays right if
+     * the refcount is ever ported. Cheaper than porting it to fix a recording. */
+    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_4X   /* 0-3.6 V — see above, NOT the ring's 2x */
     #define MIC_HAS_PWR_PIN
     #define MIC_PWR_PIN    GPIO_PIN_3
     #define MIC_PWR_SETTLE_US 50

@@ -62,12 +62,16 @@ mic_reading_t mic_read(void)
 
 
 /*
- * The clip. 16 KB of nibbles is 32768 samples — a few seconds, and it leaves the free
- * RAM above .bss with room to spare rather than claiming all of it.
+ * The clip. 24 KB of nibbles is 49152 samples: 6.1 s at MIC_SAMPLE_RATE_HZ.
+ *
+ * That is as far as it goes on RAM alone. The linker leaves 5280 bytes between
+ * __HeapLimit and __StackLimit (map, 2026-09-02) on top of the 1792 the stack reserves
+ * for itself, and growing this buffer eats that gap. The gap is not free space to
+ * spend: the reserved 1792 is a floor, not a measurement, so what actually protects the
+ * stack is leaving room ABOVE it. Overshooting is at least loud — the linker script
+ * asserts __StackLimit >= __HeapLimit and the link fails — but the assert only sees the
+ * reservation, never how deep the call tree really goes.
  */
-/* 24 KB is as far as this goes: the map puts 13.5 KB between .bss and __StackLimit, and
- * spending all of it would leave the stack no room — an overrun there is silent
- * corruption at runtime, not a link error. 8 KB more buffer, 5.6 KB still free. */
 #define CLIP_BYTES   (24 * 1024)
 #define CLIP_SAMPLES (CLIP_BYTES * 2)
 
@@ -84,14 +88,40 @@ uint16_t mic_capture(bool (*keep)(void))
     adpcm_reset(&st);
     adc_init(&mic_cfg);
 
+    /*
+     * Where the signal actually rests, measured, instead of assuming mid-scale.
+     *
+     * Mid-scale is only right when the microphone's bias sits at half the ADC's window,
+     * and neither board manages it: the MAX9814 biases at a fixed 1.25 V under a 0-2.7 V
+     * window, and the ring's MEMS follows VBAT_HIGH under a window that does not (see
+     * board_config.h). The kit's rest measured about -3151 counts off mid-scale, and
+     * ADPCM is differential: a constant offset the encoder does not know about is a step
+     * it has to slew through from predictor 0, which is the click at the start of a clip.
+     * One burst, the same 4 ms mic_read() already spends, and the offset is gone.
+     */
+    int32_t bias = 0;
+    for (uint8_t i = 0; i < MIC_BURST; i++) {
+        bias += adc_get_sample();
+    }
+    bias /= MIC_BURST;
+
     uint16_t n = 0;         /* samples STORED, at MIC_SAMPLE_RATE_HZ */
     int32_t sum = 0;        /* the running mean that stands in for a low-pass filter */
     uint16_t count = 0;
     uint16_t phase = 0;
 
     while (n < CLIP_SAMPLES && keep()) {
-        /* The ADC is unsigned around mid-scale; ADPCM wants a signed swing about zero. */
-        sum += (int16_t)(adc_get_sample() - 32768);
+        /* The ADC is unsigned; ADPCM wants a signed swing about zero. Clamped because
+         * the bias is a measurement, not the midpoint: a rail-to-rail excursion away
+         * from it can exceed int16, and wrapping would invert that sample — the same
+         * crack adpcm_encode's own clamp exists to avoid. */
+        int32_t v = (int32_t)adc_get_sample() - bias;
+        if (v > 32767) {
+            v = 32767;
+        } else if (v < -32768) {
+            v = -32768;
+        }
+        sum += v;
         count++;
 
         /* Bresenham on the two rates: emit whenever the output clock has caught up with

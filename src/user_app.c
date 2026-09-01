@@ -16,8 +16,14 @@
  * were flaky in the SDK/ROM sleep<->advertising state machine; this burst model is
  * therefore validated on the kit first.
  *
- * Recovery nets: 5 fast clicks -> failsafe bootloader; hold ~2.5 s -> hardware POR
- * reset; GATT Control Point write 0x00 -> failsafe (button-independent, cfw_ctrl.c).
+ * Gestures: a click bumps the counter; a hold records audio for as long as it lasts, up
+ * to the 6.1 s the RAM buffer holds (mic.c), and the phone pulls the clip over GATT
+ * (clip_tx.c).
+ *
+ * Recovery nets: 5 fast clicks -> failsafe bootloader; a hold that healthy firmware
+ * never acknowledges -> hardware POR reset at ~5 s (por_arm, and hold_detected is what
+ * disarms it); GATT Control Point write 0x00 -> failsafe (button-independent,
+ * cfw_ctrl.c).
  */
 #include <rwip_config.h>
 #include <board_config.h>   /* BTN_PIN/PORT + FLASH_* pins — ring vs kit (TARGET_KIT) */
@@ -158,6 +164,17 @@ static bool advertising;
  * longer end it. The volatile is the only thing forcing the reload. */
 static volatile bool recording;
 
+/*
+ * "This press was served as a hold" — which outlives the capture, because the two stop
+ * at different moments: the buffer fills after 6.1 s whether or not the finger has
+ * moved. Splitting them is what lets `recording` go false the instant the capture ends,
+ * so the burst-end handler can sleep normally again instead of holding ARCH_SLEEP_OFF
+ * until the button happens to come up. A button stuck down used to mean a ring that
+ * never sleeps AND a POR that hold_detected already disarmed — both nets gone at once.
+ * Not volatile: only task context writes it, and only the button ISR reads it.
+ */
+static bool hold_served;
+
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
 /*
  * A dropped link mid-transfer used to leave clip_tx believing it was still sending —
@@ -167,6 +184,7 @@ static volatile bool recording;
 void user_on_disconnect(struct gapc_disconnect_ind const *param)
 {
     clip_tx_abort();
+    clip_tx_set_subscribed(false);  /* a CCCD belongs to a connection, not to the ring */
     default_app_on_disconnect(param);
 }
 
@@ -206,8 +224,12 @@ void user_on_adv_undirect_complete(uint8_t status)
      * lit channel is deliberate and outlives its burst, and it is also a case that must
      * not sleep at all, since the capture needs the peripherals running. Cutting the
      * LED here unconditionally is what made the recording light go out after BURST_TU:
-     * the light was not failing, a three-second timer was ending. */
-    if (!recording) {
+     * the light was not failing, a three-second timer was ending.
+     *
+     * A transfer is the second lit channel that outlives its burst: clicking during one
+     * starts a burst whose end, three seconds later, would darken it mid-send. Same
+     * reason handle_click refuses to blink over it. */
+    if (!recording && !clip_tx_busy()) {
         led_off();
     }
     GLOBAL_INT_RESTORE();
@@ -432,9 +454,9 @@ static void click_reset(void)
  * both states with nothing for the user to remember.
  *
  * HOLD_TICKS is an ergonomics constant, not a derived one: it has to feel instant on a
- * deliberate hold while staying clear of a tap, which people do in 50-150 ms. 300 ms is
- * the starting point; it can only really be settled by feel on hardware, so it is one
- * number in one place. It cannot go to zero — the red can only appear once the firmware
+ * deliberate hold while staying clear of a tap, which people do in 50-150 ms. 300 ms was
+ * the starting point and 500 ms is what the bench settled on — it is a number that can
+ * only be judged by feel, so it stays one number in one place. It cannot go to zero — the red can only appear once the firmware
  * KNOWS the press is a hold, and lighting it on the press instead would put a red
  * flicker in front of every click and blur the two gestures again.
  *
@@ -465,6 +487,8 @@ static void hold_detected(void)
     GLOBAL_INT_DISABLE();
     held = GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0;   /* active-low */
     recording = held && !clip_tx_busy();
+    hold_served = recording;    /* same condition, so a REFUSED hold still ends as a
+                                 * click on release, exactly as before the split */
     GLOBAL_INT_RESTORE();
     if (!held) {
         return;
@@ -497,6 +521,13 @@ static void hold_detected(void)
      * result therefore belongs here, after the count exists, not in the release path. */
     (void)mic_capture(still_recording);
 
+    /* The capture is over — by release or by a full buffer — so the reasons to stay
+     * awake are too. Doing this here rather than in the release path is the whole point
+     * of hold_served: a finger that stays down after the buffer fills no longer keeps
+     * the radio and the CPU up with it. Idempotent when the release already ran. */
+    recording = false;
+    arch_set_sleep_mode(app_default_sleep_mode);
+
     /* The light goes out when RECORDING ends, which is not the same moment the button
      * comes up: the buffer holds a few seconds and fills while a finger is still down.
      * Leaving the release path to do it meant the ring looked like it was still
@@ -507,8 +538,8 @@ static void hold_detected(void)
     led_off();
     refresh_clip_count();
     advertise_click(click_count);
-    /* Step 2 starts the capture chain here. Until then the LED is the whole feature,
-     * which is the point: the gesture machine gets proven on its own. */
+    /* The advertisement is how the phone learns a clip exists: refresh_clip_count above
+     * has just read the new sample count, and non-zero is the whole signal. */
 }
 
 /*
@@ -590,11 +621,17 @@ static void on_wakeup(void)
             app_easy_timer_cancel(hold_timer);
             hold_timer = EASY_TIMER_INVALID_TIMER;
         }
-        if (recording) {                /* the hold clock ran out: it was a hold */
+        if (hold_served) {              /* the hold clock ran out: it was a hold */
+            hold_served = false;
+            /* Also the capture's stop signal, and the disarm for a hold_detected still
+             * sitting in the dispatch window — its refusal below tests this flag. */
             recording = false;
-            led_off();
+            if (!clip_tx_busy()) {      /* a transfer may own the LED by now: the buffer
+                                         * can fill, and the phone start pulling, while
+                                         * the finger is still down */
+                led_off();
+            }
             por_arm();                  /* the net is back before the button is idle */
-            arch_set_sleep_mode(app_default_sleep_mode);   /* held off while recording */
             button_rearm();                 /* hold_detected advertises once its loop ends */
             return;
         }

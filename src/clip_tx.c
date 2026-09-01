@@ -22,6 +22,7 @@ static uint16_t sent;
 static uint16_t chunk_len;
 static uint8_t  conn;
 static bool     active;
+static bool     subscribed;     /* the Audio CCCD, as the peer last wrote it */
 
 static void notify(uint16_t handle, const uint8_t *data, uint16_t len)
 {
@@ -65,6 +66,17 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk)
     if (active) {
         return;
     }
+    /*
+     * Without the subscription there is nothing to send INTO, and the stack will not say
+     * so: custs1_exe_operation skips a connection whose CCCD is clear and then confirms
+     * the notification with GAP_ERR_NO_ERROR anyway (custs1_task.c:240-278). Every chunk
+     * would "succeed" without reaching the air, at kernel-message speed, and the DONE at
+     * the end would release a clip the phone never received. There is no status to test
+     * afterwards — the test has to happen here, before the clip is spent.
+     */
+    if (!subscribed) {
+        return;
+    }
     /* No recording can be running here TODAY: mic_capture blocks the task context this
      * write arrives in, so the two cannot overlap. The day capture goes DMA and stops
      * blocking, that protection evaporates — add a recording check here, or this walks
@@ -103,6 +115,11 @@ void clip_tx_on_sent(uint16_t handle)
     if (handle == SVC1_IDX_CONTROL_POINT_VAL || handle == SVC1_IDX_AUDIO_VAL) {
         send_next();
     }
+}
+
+void clip_tx_set_subscribed(bool on)
+{
+    subscribed = on;
 }
 
 void clip_tx_abort(void)

@@ -9,11 +9,12 @@
  * The stock app converts single-ended on channel 3 with the 2x attenuator, chopping on
  * and 64x oversampling — see board_config.h for which of those differ per board.
  *
- * What is here is a LEVEL, not a recording. The stock firmware streams continuously at
- * 10 kHz by putting UART2 in internal loopback and chaining three DMA channels, so the
- * character rate clocks the conversions and no CPU runs between samples. That is worth
- * porting, and none of it is needed to answer the first question — does the microphone
- * hear anything — which one polled burst answers with a fortieth of the code.
+ * Two things live here: a LEVEL (one 4 ms burst, mic_read) and a RECORDING (a blocking
+ * poll loop, mic_capture). Neither is the stock firmware's path — it streams
+ * continuously at 10 kHz by putting UART2 in internal loopback and chaining three DMA
+ * channels, so the character rate clocks the conversions and no CPU runs between
+ * samples. That is still worth porting, and mic_capture says exactly when it becomes
+ * necessary: the loop below owns the CPU while it runs, radio included.
  */
 #include <stdbool.h>
 #include <stdint.h>
