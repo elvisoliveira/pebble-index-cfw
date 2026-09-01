@@ -8,6 +8,7 @@
 #include <arch_wdg.h>
 #include <board_config.h>   /* BTN_PORT/BTN_PIN — ring vs kit (TARGET_KIT) */
 #include <led.h>
+#include <board_config.h>
 
 static void set_pad_functions(void)
 {
@@ -23,6 +24,26 @@ static void set_pad_functions(void)
      * pattern. No-op while the LED is dark. (No SWD implications either way: the pad
      * latch call below hands P0_2/P0_10 to GPIO regardless — see board_config.h.) */
     led_reapply();
+
+    /* Re-armed on every wake, deliberately — see por_arm()'s comment. */
+    por_arm();
+}
+
+/* por_time is in units of 4096 RC32K periods, about 128 ms, in a 7-bit field: ~16 s is
+ * the hardware ceiling. 40 puts the reset at ~5 s, which has to sit comfortably above
+ * the hold that starts a recording (~1 s) so healthy firmware always disarms first. */
+#define POR_HOLD_TICKS 40
+
+void por_arm(void)
+{
+    GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
+}
+
+void por_disarm(void)
+{
+    /* Zero in POR_PIN_SELECT is "no pin", the register's own reset value — the same
+     * thing the SDK's GPIO_POR_PIN_REG macro yields for an illegal pin. */
+    SetWord16(POR_PIN_REG, POR_PIN_REG_RESET);
 }
 
 void periph_init(void)

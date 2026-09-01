@@ -24,6 +24,7 @@
 #include <user_app.h>
 #include <led.h>
 #include <mic.h>
+#include <user_periph_setup.h>   /* por_arm / por_disarm */
 #include <app_easy_gap.h>
 #include <app_easy_timer.h>
 #include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
@@ -204,18 +205,15 @@ static uint8_t fast_clicks;
 static uint8_t click_count; /* advertised counter */
 
 /*
- * Every click flashes ONE channel — a solid red, green or blue, never a mix. The three
- * channels can make seven colours between them, but lighting one at a time is both
- * simpler and more useful: it is the cheapest exercise of the LED there is, with no
- * tooling and nothing to read, and on a real ring it directly answers which channel is
- * which colour — the one thing the factory firmware never says, since it only ever
- * speaks in channels. A mix cannot answer that; you would see cyan and still not know
- * which pin made the green.
- *
- * ponytail: xorshift32 from a fixed seed, so the colour sequence repeats every boot.
- *           That is a feature while testing (reproducible) and nobody depends on it
- *           being unpredictable. Swap in the stack's RNG if that ever changes.
+ * The LED is the only feedback a sealed ring can give, so it says which gesture the
+ * firmware understood. One channel at a time, never a mix: the ring's firmware speaks
+ * in channels and never says which channel is which colour, and a mix cannot answer
+ * that — seeing cyan still leaves you guessing which pin made the green. Naming the
+ * channels by their job keeps that honest; the colours below are the kit's wiring.
  */
+#define LED_CLICK   (1u << 2)   /* channel C — blue on the kit */
+#define LED_RECORD  (1u << 0)   /* channel A — red on the kit */
+
 /* One step at its longest: 31 x 50 ms = 1.55 s, the most the ring's own format
  * expresses without a second step. Long enough to read the colour comfortably.
  *
@@ -228,23 +226,19 @@ static uint8_t click_count; /* advertised counter */
 _Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) <= BURST_TU,
                "a blink that starts a burst must fit in it, or led_off() always truncates");
 
-static uint8_t random_colour(void)
+static void blink(uint8_t channel)
 {
-    static uint32_t seed = 0x2E1D5A3B;
-    seed ^= seed << 13;
-    seed ^= seed >> 17;
-    seed ^= seed << 5;
-    return (uint8_t)(1 << (seed % LED_CHANNELS));   /* exactly one channel: a solid colour */
-}
-
-static void blink_random_colour(void)
-{
-    const uint8_t pattern[] = { LED_STEP(random_colour(), BLINK_UNITS), 0x00 };
+    const uint8_t pattern[] = { LED_STEP(channel, BLINK_UNITS), 0x00 };
     led_play(pattern, sizeof pattern);
 }
 
-/* POR hold: por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s). */
-#define POR_HOLD_TICKS 20
+/* Recording holds a channel lit for as long as it lasts, so it is a raw set, not a
+ * pattern with a duration — nothing schedules it off but the release. */
+static void led_solid(uint8_t channel)
+{
+    const uint8_t pattern[] = { LED_STEP(channel, LED_STEP_DUR_MASK), 0x00 };
+    led_play(pattern, sizeof pattern);
+}
 
 /*
  * Drop into the failsafe by invalidating the primary image, then resetting.
@@ -408,27 +402,55 @@ static void click_reset(void)
     GLOBAL_INT_RESTORE();
 }
 
-static void on_wakeup(void)
-{
-    if (armed_for_release) {            /* this wake is the release */
-        button_rearm();                 /* pin is up now -> arm for the next press */
-        return;
-    }
+/*
+ * Hold to record — and the same hold is the last-resort reset when the firmware is not
+ * answering. por_disarm() below is what separates them: healthy firmware sees the hold,
+ * disarms the silicon reset and records; wedged firmware never gets here, the POR keeps
+ * counting, and the chip reboots at ~5 s. One gesture, and the right thing happens in
+ * both states with nothing for the user to remember.
+ *
+ * HOLD_TICKS must stay comfortably under the POR's ~5 s (see por_arm) so healthy
+ * firmware always disarms first.
+ */
+#define HOLD_TICKS 100                  /* 1 s, in 10 ms timer units */
 
-    /*
-     * one click. ORDER IS LOAD-BEARING: every cancel first, every allocation after.
-     * This is the ONE place the timer-slot mechanics live; led_run and click_reset
-     * point here.
-     *
-     * app_easy_timer handles carry no identity — cancel acts on a bare slot index, a
-     * slot is freed BEFORE its callback runs, and allocation reuses the lowest free
-     * slot (app_easy_timer.c). So when this ISR preempts a timer callback at dispatch,
-     * the handle we still hold for it points at a free slot: cancelling it now is an
-     * ASSERT_WARNING no-op, but an allocation made first can take that very slot and
-     * be cancelled in its place. That cross-kill is not hypothetical — with the blink
-     * leading, the fresh gap timer died in the LED's freed slot, click_reset never
-     * ran, and slow clicks accumulated into an unasked-for failsafe.
-     */
+static timer_hnd hold_timer = EASY_TIMER_INVALID_TIMER;
+static bool recording;
+
+static void hold_detected(void)
+{
+    hold_timer = EASY_TIMER_INVALID_TIMER;
+
+    /* Disarmed because the gesture was SEEN, not because a recording succeeded. A
+     * legitimate refusal to record must never reboot the device; what the POR tests is
+     * whether the firmware responds at all. */
+    por_disarm();
+    fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
+    recording = true;
+    led_solid(LED_RECORD);
+    /* Step 2 starts the capture chain here. Until then the LED is the whole feature,
+     * which is the point: the gesture machine gets proven on its own. */
+}
+
+/*
+ * The click itself — counting, the failsafe run, the beacon. Runs on RELEASE, because
+ * a press is ambiguous: a click and a hold are the same event until the button comes
+ * back up.
+ *
+ * ORDER IS LOAD-BEARING: every cancel first, every allocation after. This is the ONE
+ * place the timer-slot mechanics live; led_run and click_reset point here.
+ *
+ * app_easy_timer handles carry no identity — cancel acts on a bare slot index, a slot
+ * is freed BEFORE its callback runs, and allocation reuses the lowest free slot
+ * (app_easy_timer.c). So when this ISR preempts a timer callback at dispatch, the
+ * handle we still hold for it points at a free slot: cancelling it now is an
+ * ASSERT_WARNING no-op, but an allocation made first can take that very slot and be
+ * cancelled in its place. That cross-kill is not hypothetical — with the blink leading,
+ * the fresh gap timer died in the LED's freed slot, click_reset never ran, and slow
+ * clicks accumulated into an unasked-for failsafe.
+ */
+static void handle_click(void)
+{
     click_count++;
     led_cancel();                       /* the LED's cancel, split from its darkness so
                                          * it cannot be "simplified" away as redundant */
@@ -457,10 +479,56 @@ static void on_wakeup(void)
             fast_clicks = 0;
         }
     }
-    blink_random_colour();              /* its own cancel is a no-op: led_cancel led */
+    blink(LED_CLICK);                   /* its own cancel is a no-op: led_cancel led */
     mic = mic_read();                   /* ~4 ms; goes out with this click's burst */
     advertise_click(click_count);       /* refresh active burst or start a new one */
-    button_rearm();                     /* still held -> wait for release; already up -> next press */
+    button_rearm();
+}
+
+/*
+ * A press decides nothing. It starts the clock that tells a click from a hold, and
+ * that is all it may do — doing the click here is what made a hold also count as a
+ * click and flash the click colour before the recording colour.
+ *
+ * Keeping this path short also nearly closes the race the old code lived with. The
+ * press handler used to run the whole click, several milliseconds of it, and a release
+ * inside that window slipped past the re-arm and was lost. What little window remains
+ * is closed outright below: if the button is already back up when we re-arm, the
+ * release has happened and no second wake is coming, so the click is settled here
+ * instead of dropped. button_rearm() reads the pin live, so armed_for_release says
+ * exactly that.
+ */
+static void on_wakeup(void)
+{
+    if (armed_for_release) {            /* the release: now we know which gesture it was */
+        if (hold_timer != EASY_TIMER_INVALID_TIMER) {
+            app_easy_timer_cancel(hold_timer);
+            hold_timer = EASY_TIMER_INVALID_TIMER;
+        }
+        if (recording) {                /* the hold clock ran out: it was a hold */
+            recording = false;
+            led_off();
+            por_arm();                  /* the net is back before the button is idle */
+            button_rearm();
+            return;
+        }
+        handle_click();                 /* it did not: a click */
+        return;
+    }
+
+    led_cancel();
+    if (hold_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(hold_timer);
+    hold_timer = app_easy_timer(HOLD_TICKS, hold_detected);
+    button_rearm();
+
+    if (!armed_for_release) {
+        /* Already back up — too fast for a hold, and no release wake will arrive. */
+        if (hold_timer != EASY_TIMER_INVALID_TIMER) {
+            app_easy_timer_cancel(hold_timer);
+            hold_timer = EASY_TIMER_INVALID_TIMER;
+        }
+        handle_click();
+    }
 }
 
 void app_on_init(void)
@@ -473,8 +541,7 @@ void app_on_init(void)
     bootlog_clear();
     wkupct_register_callback(on_wakeup);
     button_rearm();                     /* pin idle-high at boot -> arms for the first press */
-    /* Bonus recovery net: holding the button ~POR_HOLD_TICKS (~2.5 s) POR-resets the
-     * chip from any RUNNING state, e.g. if the app ever hangs. Active-low. A tap
-     * stays a click; 5 fast taps stay the failsafe. */
-    GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
+    /* The POR is armed from set_pad_functions(), not here: periph_init re-runs on every
+     * wake, so a path that forgets to re-arm loses the net until the next sleep instead
+     * of silently forever. */
 }
