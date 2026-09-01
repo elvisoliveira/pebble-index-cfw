@@ -151,8 +151,10 @@ static bool advertising;
 
 /* Set while a hold is being served. Declared here because the burst-end handler reads
  * it, and that sits above the gesture code that owns it. volatile because the capture
- * loop polls it (via still_recording) while the release ISR clears it — today the
- * cross-module call forces the reload anyway, but LTO would quietly stop that. */
+ * loop polls it (via still_recording) while the release ISR clears it — and this build
+ * links with -flto (CMakeLists), so the cross-module call is NO barrier: the call can
+ * inline, the read can hoist out of the loop, and a recording would never end. The
+ * volatile is the only thing forcing the reload. */
 static volatile bool recording;
 
 /* .default_operation_adv — every SDK-initiated start funnels through here. */
@@ -469,7 +471,13 @@ static void hold_detected(void)
 
     /* Disarmed because the gesture was SEEN, not because a recording succeeded. A
      * legitimate refusal to record must never reboot the device; what the POR tests is
-     * whether the firmware responds at all. */
+     * whether the firmware responds at all.
+     *
+     * A release racing past the guard above has already re-armed, so this disarms
+     * again and the ring sits net-off with the button up until the next wake re-arms
+     * it (which is why the arm lives in set_pad_functions). Chosen over moving the
+     * disarm below the refusal, which would close that sliver by breaking the rule
+     * this comment states. */
     por_disarm();
     fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
 
