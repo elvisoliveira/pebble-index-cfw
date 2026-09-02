@@ -24,12 +24,27 @@ static void set_pad_functions(void)
      * latch call below hands P0_2/P0_10 to GPIO regardless — see board_config.h.) */
     led_reapply();
 
-    /* Re-armed on every wake, deliberately — see por_arm()'s comment. */
+    /* Re-armed on every wake (except while the button is down) — see por_arm(). */
     por_arm();
 }
 
 void por_arm(void)
 {
+    /* Never while the button is down. A buffer-full hold ends its capture with the
+     * finger still on the button, the burst starts, and the chip wakes for every
+     * advertising event — each wake running this via set_pad_functions. Arming with the
+     * pin low would let the POR count the tail of a hold the firmware already SERVED
+     * and reset a plainly alive ring ~5 s later, clip and counter included, breaking
+     * "the POR stays disarmed until the button actually comes up".
+     *
+     * Skipping never disarms anything: the POR block is always-on, so an armed net
+     * stays armed through the skip (a mid-hold wake on an idle ring leaves the silicon
+     * counting, exactly as it should) and a hold-disarmed one stays off until the first
+     * wake with the button up. Wedged-deaf firmware runs no wakes at all, so whatever
+     * state the POR was in persists — which is the whole point of the net. */
+    if (GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0) {
+        return;
+    }
     GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
 }
 

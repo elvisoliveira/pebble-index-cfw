@@ -91,8 +91,11 @@ static void button_rearm(void)
 #define ADV_MFR_LEN  9   /* len + type + company(2) + counter + mic pp(2) + clip samples(2) */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
 
-_Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
-               "USER_DEVICE_NAME too long: advertisement would overflow");
+/* Minus 3: the stack reserves the Flags AD for itself, so the host buffer this payload
+ * lands in (gapm_adv_host.adv_data, filled by stage_adv) is ADV_DATA_LEN - 3 bytes.
+ * Bounding by the full 31 would let 29-31 bytes compile clean and overflow it. */
+_Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN - 3,
+               "advertisement too long for the host buffer (ADV_DATA_LEN minus Flags)");
 
 /* Peak-to-peak of the last microphone burst, raw ADC counts, measured at the click that
  * started this burst. Appended AFTER the counter, so the phone — which reads payload[0]
@@ -174,6 +177,17 @@ static void stage_adv(uint8_t counter)
  */
 static bool advertising;
 
+/* A capture that outlives its burst leaves the fresh clip count on air for only the
+ * milliseconds between advertise_click's refresh and the queued burst-timeout stop
+ * (the capture blocked the burst-end handler, so `advertising` reads stale-true).
+ * Owing a burst lets the completion handler start a fresh one from the staged,
+ * current payload the moment the dying one actually ends. */
+static bool burst_owed;
+
+/* The advertised counter — beacon state as much as gesture state, and up here because
+ * the burst-end handler re-advertises it when a burst is owed. */
+static uint8_t click_count;
+
 /* Set while a hold is being served. Declared here because the burst-end handler reads
  * it, and that sits above the gesture code that owns it. volatile because the capture
  * loop polls it (via still_recording) while the release ISR clears it — and this build
@@ -205,8 +219,7 @@ static bool hold_served;
  */
 void user_on_disconnect(struct gapc_disconnect_ind const *param)
 {
-    clip_tx_abort();
-    clip_tx_set_subscribed(false);  /* a CCCD belongs to a connection, not to the ring */
+    clip_tx_abort();    /* ends the transfer AND forgets the peer's CCCDs */
     default_app_on_disconnect(param);
 }
 
@@ -228,14 +241,20 @@ static void advertise_click(uint8_t counter)
      * Reachable in ordinary use: the phone holds the link for seconds to fetch a clip. */
     bool connected = app_env[0].connection_active;
 
-    if (advertising && !connected) {
-        uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
-        app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
+    /* Stage FIRST, on every path: the staged command is durable (see stage_adv) and is
+     * what the next start — click, boot or post-disconnect — sends. Staging only on the
+     * start path left the update path with an older counter in the command, and a
+     * connect-during-burst plus a click-free disconnect then re-advertised it — a uint8
+     * regression the phone's delta accumulator reads as ~250 phantom clicks. */
+    stage_adv(counter);
+    if (connected) {
         return;
     }
-
-    stage_adv(counter);         /* before starting, so the first packet is complete */
-    if (connected) {
+    if (advertising) {
+        /* Refresh the air from the freshly staged command: one build_adv, both current. */
+        struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+        app_easy_gap_update_adv_data(cmd->info.host.adv_data, cmd->info.host.adv_data_len,
+                                     NULL, 0);
         return;
     }
     advertising = true;
@@ -275,6 +294,15 @@ void user_on_adv_undirect_complete(uint8_t status)
     }
     GLOBAL_INT_RESTORE();
     arch_set_sleep_mode(recording ? ARCH_SLEEP_OFF : app_default_sleep_mode);
+
+    /* The burst a capture owes (see burst_owed): the flag is false now, so this takes
+     * the start path and the fresh clip count gets a full BURST_TU on air. Consumed
+     * even if a connection swallows it — the staged command carries it to the
+     * post-disconnect burst instead. */
+    if (burst_owed) {
+        burst_owed = false;
+        advertise_click(click_count);
+    }
 }
 
 /*
@@ -304,7 +332,14 @@ _Static_assert(BURST_TU > CLICK_WINDOW, "BURST_TU must exceed CLICK_WINDOW");
 
 static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
 static uint8_t fast_clicks;
-static uint8_t click_count; /* advertised counter */
+
+/* See user_app.h. Task context (clip_tx's done branch); stages only, starts nothing —
+ * the burst that carries it is whichever one starts next. */
+void user_beacon_restage(void)
+{
+    refresh_clip_count();
+    stage_adv(click_count);
+}
 
 /* The LED is the only feedback a sealed ring can give, so it says what the firmware is
  * doing. One channel at a time, never a mix: a mix cannot answer which channel is which
@@ -541,7 +576,11 @@ static void hold_detected(void)
     bool held;   /* outside the guard: DISABLE/RESTORE are a brace pair, its own scope */
     GLOBAL_INT_DISABLE();
     held = GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0;   /* active-low */
-    recording = held && !clip_tx_busy();
+    /* Refused while a link is up, not only during a transfer: mic_capture owns the task
+     * context for up to 6.1 s, so every GATT message — the phone's fetch included —
+     * would sit undispatched under a live connection, and the BLE ISRs preempting the
+     * poll loop stretch the measured-unloaded sample clock into pitch-warped audio. */
+    recording = held && !clip_tx_busy() && !app_env[0].connection_active;
     hold_served = recording;    /* same condition, so a REFUSED hold still ends as a
                                  * click on release, exactly as before the split */
     GLOBAL_INT_RESTORE();
@@ -594,7 +633,10 @@ static void hold_detected(void)
     refresh_clip_count();
     advertise_click(click_count);
     /* The advertisement is how the phone learns a clip exists: refresh_clip_count above
-     * has just read the new sample count, and non-zero is the whole signal. */
+     * has just read the new sample count, and non-zero is the whole signal. If that
+     * landed on a burst already dying — `advertising` stale-true, its stop queued right
+     * behind this callback — the refresh airs for milliseconds; owe a fresh burst. */
+    burst_owed = advertising;
 }
 
 /*

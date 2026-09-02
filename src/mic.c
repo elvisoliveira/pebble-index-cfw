@@ -35,7 +35,12 @@ static const adc_config_t mic_cfg = {
     .oversampling     = 6,      /* 2^6 = 64 averaged per conversion, so 16-bit results */
 };
 
-mic_reading_t mic_read(void)
+/* Power/settle + ADC bracketing, shared by the level and the capture. One copy on
+ * purpose: on the ring MIC_PWR_PIN is P0_3, the flash's second power pin
+ * (board_config.h), so this sequence is a shared-rail hardware invariant — two
+ * hand-kept copies drifting apart would be a corrupted-first-samples bug that
+ * reproduces only on a sealed ring, never on the kit (which has no power pin). */
+static void mic_on(void)
 {
 #ifdef MIC_HAS_PWR_PIN
     /* The ring switches the microphone's supply from a GPIO, and the stock app waits
@@ -44,6 +49,19 @@ mic_reading_t mic_read(void)
     arch_asm_delay_us(MIC_PWR_SETTLE_US);
 #endif
     adc_init(&mic_cfg);
+}
+
+static void mic_off(void)
+{
+    adc_disable();
+#ifdef MIC_HAS_PWR_PIN
+    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, false);
+#endif
+}
+
+mic_reading_t mic_read(void)
+{
+    mic_on();
 
     uint16_t lo = 0xFFFF, hi = 0;
     uint32_t sum = 0;
@@ -54,10 +72,7 @@ mic_reading_t mic_read(void)
         sum += s;
     }
 
-    adc_disable();
-#ifdef MIC_HAS_PWR_PIN
-    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, false);
-#endif
+    mic_off();
     mic_reading_t r = { .pp = hi - lo, .dc = (uint16_t)(sum / MIC_BURST) };
     return r;
 }
@@ -82,13 +97,9 @@ static uint16_t clip_samples;
 
 uint16_t mic_capture(bool (*keep)(void))
 {
-#ifdef MIC_HAS_PWR_PIN
-    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, true);
-    arch_asm_delay_us(MIC_PWR_SETTLE_US);
-#endif
     adpcm_state_t st;
     adpcm_reset(&st);
-    adc_init(&mic_cfg);
+    mic_on();
 
     /*
      * Where the signal actually rests, measured, instead of assuming mid-scale.
@@ -151,11 +162,13 @@ uint16_t mic_capture(bool (*keep)(void))
         }
     }
 
-    adc_disable();
-#ifdef MIC_HAS_PWR_PIN
-    GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, false);
-#endif
-    clip_samples = n;
+    mic_off();
+    /* Only a capture that stored something replaces the clip. n == 0 — a release
+     * landing inside the settle + bias preamble above, before the first nibble — must
+     * not wipe a pending, unfetched recording whose bytes this run never touched. */
+    if (n != 0) {
+        clip_samples = n;
+    }
     return n;
 }
 

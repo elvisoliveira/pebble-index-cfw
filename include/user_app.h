@@ -20,4 +20,9 @@ void user_advertise_operation(void);
 void user_on_disconnect(struct gapc_disconnect_ind const *param);
 void user_on_adv_undirect_complete(uint8_t status);
 
+/* Re-stage the advertisement from CURRENT state (clip count, counter) — for state
+ * changes that arrive with no click to carry them, e.g. a clip delivered and released
+ * mid-connection. The staged command is what the post-disconnect burst sends. */
+void user_beacon_restage(void);
+
 #endif // USER_APP_H_
