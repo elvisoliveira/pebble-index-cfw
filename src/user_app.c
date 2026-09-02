@@ -630,13 +630,21 @@ static void hold_detected(void)
      * until the button actually comes up, because a hold should never reset a ring that
      * is plainly alive. */
     led_off();
+
+    /* Sampled BEFORE the call, because advertise_click sets the flag on its start path:
+     * reading it afterwards owes a burst in both cases, so a hold from idle — which
+     * just started a full BURST_TU of its own — would air a second one back to back,
+     * doubling the radio time on the common path. What is being asked is whether a
+     * burst was ALREADY running, which only the value from before can answer. */
+    bool late = advertising;
+
     refresh_clip_count();
     advertise_click(click_count);
     /* The advertisement is how the phone learns a clip exists: refresh_clip_count above
      * has just read the new sample count, and non-zero is the whole signal. If that
      * landed on a burst already dying — `advertising` stale-true, its stop queued right
      * behind this callback — the refresh airs for milliseconds; owe a fresh burst. */
-    burst_owed = advertising;
+    burst_owed = late;
 }
 
 /*
