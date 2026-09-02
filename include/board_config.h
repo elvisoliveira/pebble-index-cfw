@@ -58,17 +58,38 @@
     #define LED_A_PIN      GPIO_PIN_9   /* J4 "PWM" */
     #define LED_B_PIN      GPIO_PIN_8   /* J4 "SDA" — same channel, same pin as the ring */
     #define LED_C_PIN      GPIO_PIN_6   /* J4 "RX"  */
-    /* Microphone: a MAX9814 module on J3 "3V3"/GND, output into P0_7. It biases its
-     * output at a FIXED 1.25 V and caps the swing at 2 Vpp, so the signal lives in
-     * 0.25-2.25 V — outside the ring's 0-1.8 V window, hence the wider attenuator. It
-     * needs no enable pin here: the module is powered whenever the board is.
+    /* Microphone: a MAX9814 module on J3 "3V3"/GND, output into P0_7, powered whenever
+     * the board is (no enable pin). Numbers below from the datasheet, Rev 3 8/16.
      *
-     * Its Gain and AR pins are both left floating: 60 dB, and the middle attack/release
-     * ratio. AR is the knob to reach for if a level reads the same talking as silent —
-     * mic_level's burst is about 4 ms, the same order as the AGC's own time constants,
-     * so a fast release lets the AGC compress the signal WHILE it is being measured.
-     * That is the module fighting the measurement, not a dead microphone. The ring has
-     * no AGC at all, which is the deeper reason these two are not the same instrument. */
+     * MICOUT rests at 1.23 V TYP, and the part spread is 1.14-1.32 V — not a fixed
+     * value, which is why mic_capture measures the bias instead of assuming one. Ours
+     * reads 1.229 V (bench 2026-09-02). The swing is 2 x V_TH, set by the module's own
+     * divider off the 2.0 V MICBIAS: the datasheet's reference divider gives 1.6 Vpp
+     * and its spec example 1.4 Vpp, so the signal lives roughly in 0.4-2.0 V. Either
+     * way it clears the ring's 0-1.8 V window, which is what the wider attenuator here
+     * is for; the exact V_TH is measurable at the module's TH pin if it is ever needed.
+     *
+     * GAIN and A/R are both left floating. GAIN floating is 60 dB. A/R floating is
+     * 1:4000 — the LONGEST attack-to-release ratio of the three, not a middle setting
+     * (Table 1: GND 1:500, VDD 1:2000, unconnected 1:4000). With the reference 470 nF
+     * timing cap that is 1.1 ms attack, 30 ms hold (fixed), 4400 ms release.
+     *
+     * Two consequences for anything that reads this microphone:
+     *
+     *   - mic_read's burst is ~4 ms, FOUR attack times. The AGC has already compressed
+     *     before the burst ends, so pp is always an AGC-flattened number. It is the
+     *     attack that does this, not the release.
+     *   - after any loud sound the gain stays down for ~4.4 s, so two clicks in a row
+     *     do not produce comparable levels. Not a dead microphone; the instrument
+     *     recovering.
+     *
+     * THE RING HAS NO AGC AT ALL. So the pumping this module adds to a recording — the
+     * gain ducking on a loud syllable and taking seconds to come back, which the
+     * datasheet names "pumping" or "breathing" — is a property of the BENCH, not of the
+     * product. Do not tune the capture path against it. If a flat reference is ever
+     * wanted, the datasheet's own switch is TH tied to MICBIAS, which disables the AGC
+     * outright. What the two boards DO share is that neither has any anti-aliasing:
+     * both are flat well past the ~11 kHz the converter free-runs at. */
     #define MIC_ADC_ATTN   ADC_INPUT_ATTN_3X   /* 0-2.7 V */
 #else
     #define BTN_PIN        GPIO_PIN_1

@@ -94,9 +94,10 @@ uint16_t mic_capture(bool (*keep)(void))
      * Where the signal actually rests, measured, instead of assuming mid-scale.
      *
      * Mid-scale is only right when the microphone's bias sits at half the ADC's window,
-     * and neither board manages it: the MAX9814 biases at a fixed 1.25 V under a 0-2.7 V
-     * window, and the ring's MEMS follows VBAT_HIGH under a window that does not (see
-     * board_config.h). The kit's rest measured about -3151 counts off mid-scale, and
+     * and neither board manages it: the MAX9814 rests at 1.23 V typical under a 0-2.7 V
+     * window — and typical is the word, since the part spread is 1.14-1.32 V, so this
+     * was never a constant to hardcode — while the ring's MEMS follows VBAT_HIGH under
+     * a window that does not (see board_config.h). The kit's rest measured about -3151 counts off mid-scale, and
      * ADPCM is differential: a constant offset the encoder does not know about is a step
      * it has to slew through from predictor 0, which is the click at the start of a clip.
      * One burst, the same 4 ms mic_read() already spends, and the offset is gone.

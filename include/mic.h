@@ -47,9 +47,17 @@ typedef struct {
  * Take a burst and report both numbers.
  *
  * dc is what tells a dead signal path from a live-but-flat one, and they need very
- * different fixes. A MAX9814 rests at a fixed 1.25 V, which under the kit's 3x
- * attenuator is about 30300 counts; the ring's MEMS rests near mid-rail. A dc of
- * roughly zero means nothing is arriving at the pin — wiring, power, the wrong pad.
+ * different fixes. A MAX9814 rests at 1.23 V typical — 1.14-1.32 V across parts, so a
+ * range rather than a number — which under the kit's 3x attenuator is about 29800
+ * counts, and ours measured 29835. The ring's MEMS rests at half whatever VBAT_HIGH is.
+ *
+ * A dc of roughly zero means nothing is arriving at the pin: wiring, power, the wrong
+ * pad — or, on a module that is not this one, an output coupling capacitor. The
+ * datasheet says a COUT is REQUIRED to strip MICOUT's 1.23 V; ours plainly has none,
+ * which is exactly what an ADC wants, since that bias is our midpoint. A board built to
+ * the datasheet would hand us a signal centred on nothing, and it would look identical
+ * to a dead one here.
+ *
  * A plausible dc with a tiny pp means the signal is there and something is flattening
  * it, which on the kit is the AGC's job description (see board_config.h on the AR pin).
  *
