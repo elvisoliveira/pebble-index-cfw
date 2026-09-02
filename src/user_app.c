@@ -1,8 +1,19 @@
 /*
- * Featureless Pebble Index CFW — this file is the whole app.
+ * Pebble Index CFW — the gestures, the beacon and the recovery nets. The LED player,
+ * the microphone, the codec and the clip transfer live in their own files.
  *
- * Each button press bumps a counter in the advertisement; the phone reads "counter
- * changed" as one click (it matches on dev company id 0xFFFF + the fixed address).
+ * Each button press bumps a counter in the advertisement (dev company id 0xFFFF,
+ * payload[0]), and the phone accumulates the DIFFERENCE between successive readings
+ * rather than counting one click per change. That is why a burst that never reaches
+ * the air is not a lost click: the counter kept climbing, so the next advertisement
+ * carries the higher value and the phone adds the whole jump.
+ *
+ * The contract ends where the counter stops climbing: it is a uint8_t in RAM, so a
+ * reboot restarts it at zero and a difference taken across that boundary is nonsense —
+ * 200 to 0 reads as 56 clicks that never happened. Reboots are not hypothetical here
+ * (the POR gesture, the NMI, coming back from the failsafe), and nothing on either side
+ * detects one. Living with it beats the retained counter it would take to fix.
+ *
  * Model: BURST-FROM-SLEEP — silent when idle (extended sleep, radio off, the wkupct
  * is the only wake source); each click fires a short, FAST advertising burst carrying
  * the new counter, then the device idles again.
@@ -12,21 +23,35 @@
  * were flaky in the SDK/ROM sleep<->advertising state machine; this burst model is
  * therefore validated on the kit first.
  *
- * Recovery nets: 5 fast clicks -> failsafe bootloader; hold ~2.5 s -> hardware POR
- * reset; GATT Control Point write 0x00 -> failsafe (button-independent, cfw_ctrl.c).
+ * Gestures: a click bumps the counter; a hold records audio for as long as it lasts, up
+ * to the 6.1 s the RAM buffer holds (mic.c), and the phone pulls the clip over GATT
+ * (clip_tx.c).
+ *
+ * Recovery nets: 5 fast clicks -> failsafe bootloader; a hold that healthy firmware
+ * never acknowledges -> hardware POR reset at ~5 s (por_arm, and hold_detected is what
+ * disarms it); GATT Control Point write 0x00 -> failsafe (button-independent,
+ * cfw_ctrl.c).
  */
 #include <rwip_config.h>
 #include <board_config.h>   /* BTN_PIN/PORT + FLASH_* pins — ring vs kit (TARGET_KIT) */
 #include <user_app.h>
+#include <led.h>
+#include <mic.h>
+#include <clip_tx.h>
+#include <user_periph_setup.h>   /* por_arm / por_disarm */
 #include <app_easy_gap.h>
+#include <app.h>            /* app_env[].connection_active */
 #include <app_easy_timer.h>
-#include <app_default_handlers.h>   /* default_app_on_set_dev_config_complete */
+#include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
+#include <gapc_task.h>              /* struct gapc_disconnect_ind */
 #include <wkupct_quadec.h>
 #include <gpio.h>
+#include <ll.h>             /* GLOBAL_INT_DISABLE / GLOBAL_INT_RESTORE */
 #include <spi.h>
 #include <spi_flash.h>
 #include <arch.h>
+#include <arch_wdg.h>       /* wdg_reload around the boot-log erase */
 #include <string.h>
 
 /*
@@ -65,65 +90,230 @@ static void button_rearm(void)
  * the name on the first click (still findable by address, gone from name-based
  * scans). So we emit both AD structures together every time.
  */
-#define ADV_MFR_LEN  5   /* len + type + company(2) + counter */
+#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + reserved(2) + clip samples(2) */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
 
-_Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN,
-               "USER_DEVICE_NAME too long: advertisement would overflow");
+/* Minus 3: the stack reserves the Flags AD for itself, so the host buffer this payload
+ * lands in (gapm_adv_host.adv_data, filled by stage_adv) is ADV_DATA_LEN - 3 bytes.
+ * Bounding by the full 31 would let 29-31 bytes compile clean and overflow it. */
+_Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN - 3,
+               "advertisement too long for the host buffer (ADV_DATA_LEN minus Flags)");
+
+/* Bytes 5-6 of the AD structure once carried the microphone's peak-to-peak from a 4 ms
+ * ADC burst taken in the button ISR. That burst is gone (see handle_click: the SDK
+ * polls the same ADC from task context), but the bytes stay, zeroed, so the clip count
+ * keeps its offset for a phone that already parses it. Free for the next field. */
+
+/* Samples in the clip the ring is HOLDING — not in the last one recorded. It reads back
+ * from mic rather than being remembered here, so that a delivered clip stops being
+ * advertised: the phone treats non-zero as "audio you have not taken yet". */
+static uint16_t clip_samples;
+
+static void refresh_clip_count(void)
+{
+    (void)mic_clip(&clip_samples);
+}
 
 static uint8_t build_adv(uint8_t *adv, uint8_t counter)
 {
-    adv[0] = 0x04;              /* length of this AD structure */
+    adv[0] = ADV_MFR_LEN - 1;   /* length of this AD structure */
     adv[1] = 0xFF;              /* manufacturer specific data */
     adv[2] = 0xFF;              /* company id 0xFFFF (dev/unassigned), LSB */
     adv[3] = 0xFF;              /*                                    MSB */
     adv[4] = counter;           /* the click counter the phone watches */
-    adv[5] = USER_DEVICE_NAME_LEN + 1;
-    adv[6] = GAP_AD_TYPE_COMPLETE_NAME;
-    memcpy(&adv[7], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
+    adv[5] = 0;                 /* reserved (was microphone peak-to-peak), LSB */
+    adv[6] = 0;                 /*                                        MSB */
+    adv[7] = (uint8_t)clip_samples;        /* samples in the last clip, LSB */
+    adv[8] = (uint8_t)(clip_samples >> 8); /*                           MSB */
+    adv[9] = USER_DEVICE_NAME_LEN + 1;
+    adv[10] = GAP_AD_TYPE_COMPLETE_NAME;
+    memcpy(&adv[11], USER_DEVICE_NAME, USER_DEVICE_NAME_LEN);
     return ADV_MFR_LEN + ADV_NAME_LEN;
 }
 
-/* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each). */
-#define BURST_TU  MS_TO_TIMERUNITS(3000)
+/*
+ * Write the payload into the command the SDK will send the next time it starts
+ * advertising. app.c keeps one such message in adv_cmd and only lets go of it when an
+ * advertising start actually consumes it, so staging is durable: whoever starts next
+ * carries this, whether that is a click, the boot, or default_app_on_disconnect.
+ */
+static void stage_adv(uint8_t counter)
+{
+    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+    cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
+}
+
+/* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each).
+ * ADV_BURST_MS is shared with the SDK's boot burst (user_config.h), so the two cannot
+ * drift apart. */
+#define BURST_TU  MS_TO_TIMERUNITS(ADV_BURST_MS)
+
+/*
+ * "A burst is on the air right now." advertise_click reads it to choose between
+ * refreshing the adv data and starting a burst, and getting it wrong costs a click:
+ * refreshing an advertiser that is not running drops that count silently.
+ *
+ * Set at the two places bursts start; cleared in ONE place,
+ * user_on_adv_undirect_complete, once the controller has actually stopped — the far
+ * edge, identical for our bursts and the SDK's own (boot, post-disconnect), so the two
+ * kinds cannot drift apart. Setting it in config-complete was wrong (with the custom
+ * profile present the SDK advertises from db_init_complete, not there); the
+ * user_advertise_operation funnel sees every start regardless of which path makes it.
+ *
+ * Two windows are accepted rather than closed, both self-healing:
+ *
+ *  - Stop in flight (timeout fired, GAPM cancel not yet complete — up to one adv
+ *    interval, 40-80 ms): the flag still reads true, so a click there refreshes a
+ *    dying advertiser and its count rides out with the NEXT click — losing nothing,
+ *    because the phone adds differences (see the top of this file). Clearing at the
+ *    near edge instead was tried and is worse: a click then STARTS a burst whose flag
+ *    the old burst's completion promptly wipes, desyncing flag and air for up to 3 s.
+ *  - Boot, during the GATT database build: the flag is false with the SDK's start
+ *    pending, so a click's own start collides with it. The loser's error lands in
+ *    adv_undirect_complete like any completion; the desync heals at the burst's far
+ *    edge. Boot-only, under 3 s.
+ *
+ * ponytail: the BURST_TU stop timer is allocated inside the SDK helper, out of sight —
+ *           on an exhausted pool the burst never stops and the radio stays on until a
+ *           connection, the failsafe gesture or a reboot. Own the burst timer (plain
+ *           advertise_start + a checked app_easy_timer, like led_run's) if that ever
+ *           stops being acceptable.
+ */
 static bool advertising;
+
+/* A hold that lands on a running burst waits for the burst to END before recording (see
+ * hold_detected): the radio is cancelled, and the capture starts from the burst-end
+ * handler, which is the one place that knows the air is quiet. */
+static bool capture_pending;
+static void capture(void);
+
+/* The advertised counter — beacon state as much as gesture state, and up here because
+ * the burst-end handler advertises it after a capture it started. */
+static uint8_t click_count;
+
+/* Set while a hold is being served. Declared here because the burst-end handler reads
+ * it, and that sits above the gesture code that owns it. volatile because the capture
+ * loop polls it (via still_recording) while the release ISR clears it — and this build
+ * links with -flto (CMakeLists), so the cross-module call is NO barrier: the call can
+ * inline and the read can hoist out of the loop, leaving `n < CLIP_SAMPLES` as the only
+ * exit left — every hold would record the full buffer and releasing early would no
+ * longer end it. The volatile is the only thing forcing the reload. */
+static volatile bool recording;
+
+/*
+ * "This press was served as a hold" — which outlives the capture, because the two stop
+ * at different moments: the buffer fills after 6.1 s whether or not the finger has
+ * moved. Splitting them is what lets `recording` go false the instant the capture ends,
+ * so the burst-end handler can sleep normally again instead of holding ARCH_SLEEP_OFF
+ * until the button happens to come up. A button stuck down used to mean a ring that
+ * never sleeps AND a POR that hold_detected already disarmed — both nets gone at once.
+ * Both contexts write it — hold_detected under its guard, the release ISR when it
+ * consumes the gesture — and neither needs volatile: every access is a single read or a
+ * single store, and no loop polls it. That is the whole difference from `recording`
+ * above, which a loop DOES poll and which therefore cannot do without it.
+ */
+static bool hold_served;
+
+/* .default_operation_adv — every SDK-initiated start funnels through here. */
+/*
+ * A dropped link mid-transfer used to leave clip_tx believing it was still sending —
+ * refusing every later recording and holding its channel lit, with nothing to clear it.
+ * The stack tells us; it just was not being asked.
+ */
+void user_on_disconnect(struct gapc_disconnect_ind const *param)
+{
+    clip_tx_abort();    /* ends the transfer AND forgets the peer's CCCDs */
+    default_app_on_disconnect(param);
+}
+
+void user_advertise_operation(void)
+{
+    advertising = true;
+    default_advertise_operation();
+}
 
 static void advertise_click(uint8_t counter)
 {
-    if (advertising) {
-        uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
-        app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
+    /* While a link is up the ring is not advertising, and neither branch below is safe:
+     * refreshing pushes data at a stopped advertiser and the count goes nowhere, while
+     * starting asks for a second connectable advertiser with CFG_MAX_CONNECTIONS at 1.
+     * Which one would run depends on whether the stack raises an advertising completion
+     * on connect, which is not established — so the payload is staged in the command
+     * instead and neither is reached. default_app_on_disconnect starts its burst from
+     * that same command, so the counter is current the moment the ring is audible again.
+     * Reachable in ordinary use: the phone holds the link for seconds to fetch a clip. */
+    bool connected = app_env[0].connection_active;
+
+    /* Stage FIRST, on every path: the staged command is durable (see stage_adv) and is
+     * what the next start — click, boot or post-disconnect — sends. Staging only on the
+     * start path left the update path with an older counter in the command, and a
+     * connect-during-burst plus a click-free disconnect then re-advertised it — a uint8
+     * regression the phone's delta accumulator reads as ~250 phantom clicks. */
+    stage_adv(counter);
+    if (connected) {
         return;
     }
-
-    /* Set the active command before starting, so the first packet is complete. */
-    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
-    cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
-    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
+    if (advertising) {
+        /* Refresh the air from the freshly staged command: one build_adv, both current. */
+        struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+        app_easy_gap_update_adv_data(cmd->info.host.adv_data, cmd->info.host.adv_data_len,
+                                     NULL, 0);
+        return;
+    }
     advertising = true;
+    app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
 }
 
-/* Burst ended (timeout) -> go idle. The SDK sets extended sleep here; the device
- * sleeps until the next button press. */
+/* Burst ended — by its timeout, or by the cancel a hold sent — so go idle, or record.
+ * The SDK sets extended sleep here; the device sleeps until the next button press. */
 void user_on_adv_undirect_complete(uint8_t status)
 {
     (void)status;
-    advertising = false;
-    arch_set_sleep_mode(app_default_sleep_mode);
-}
+    bool run_capture = false;
 
-/* Boot: the SDK's config-complete starts the first (timeout) burst — track it so a
- * click during that boot burst updates the counter instead of starting a second one. */
-void user_on_set_dev_config_complete(void)
-{
-    default_app_on_set_dev_config_complete();
-    advertising = true;
+    /* The ONE place the flag clears (see its comment). Paired with led_off() under one
+     * guard so a click cannot land between them, start a burst, light a blink, and
+     * have that blink cancelled and darkened by the led_off() below. */
+    GLOBAL_INT_DISABLE();
+    advertising = false;
+    if (capture_pending) {
+        /* A hold cancelled this burst to record in silence. Still a hold — the release
+         * clears `recording` — and still ours to record: gapm lives in ROM, so whether a
+         * central taking the air also reports this completion is not established, and a
+         * capture under a live link would block the host for seconds. */
+        capture_pending = false;
+        run_capture = recording && !app_env[0].connection_active;
+        if (!run_capture) {
+            recording = false;      /* nothing to record: released, or a link is up */
+        }
+    }
+    /* Never sleep with a channel lit — the pad latch holds it high through extended
+     * sleep, burning ~3 mA until the next click. Two lit channels legitimately outlive
+     * a burst and must not be cut here:
+     *
+     *  - the recording light, when this completion is the cancel a hold asked for: the
+     *    capture is about to start (run_capture), and it must not sleep either, since
+     *    it needs the peripherals running. Cutting the LED unconditionally is what once
+     *    made the recording light go out after BURST_TU — the light was not failing, a
+     *    three-second timer was ending.
+     *  - a transfer: clicking during a send starts a burst whose end, three seconds
+     *    later, would darken it mid-send. Same reason handle_click refuses to blink
+     *    over it. */
+    if (!recording && !clip_tx_busy()) {
+        led_off();
+    }
+    GLOBAL_INT_RESTORE();
+    arch_set_sleep_mode(recording ? ARCH_SLEEP_OFF : app_default_sleep_mode);
+
+    if (run_capture) {
+        capture();
+    }
 }
 
 /*
  * Recovery gesture: 5 clicks in quick succession (each gap under CLICK_WINDOW) drop
  * into the failsafe bootloader — the boot then sees an invalid image and enters the
- * failsafe (see ../../failsafe-recovery-test). enter_failsafe() fires SYNCHRONOUSLY
+ * failsafe. enter_failsafe() fires SYNCHRONOUSLY
  * on the 5th click, no timer in the trigger path: a click is a wkupct edge that
  * reliably wakes the system (the counter climbs cleanly). It replaced a
  * press-and-hold whose detection timer never fired — proven dead on hardware across
@@ -147,18 +337,41 @@ _Static_assert(BURST_TU > CLICK_WINDOW, "BURST_TU must exceed CLICK_WINDOW");
 
 static timer_hnd click_timer = EASY_TIMER_INVALID_TIMER;
 static uint8_t fast_clicks;
-static uint8_t click_count; /* advertised counter */
 
-/* POR hold: por_time x 4096 x RC32K period ~= por_time x 128 ms (~2.5 s). */
-#define POR_HOLD_TICKS 20
+/* See user_app.h. Task context (clip_tx's done branch); stages only, starts nothing —
+ * the burst that carries it is whichever one starts next. */
+void user_beacon_restage(void)
+{
+    refresh_clip_count();
+    stage_adv(click_count);
+}
+
+/* The LED is the only feedback a sealed ring can give, so it says what the firmware is
+ * doing. One channel at a time, never a mix: a mix cannot answer which channel is which
+ * colour, and that is the question the LED exists to settle. Meanings live in led.h,
+ * because the transfer lights one too. */
+
+/* A click gets a flash, not a light: two units is 100 ms, long enough to read and
+ * short enough that it reads as an acknowledgement rather than a state. Recording is
+ * the thing that holds a channel lit, and the two should not look alike. */
+#define BLINK_UNITS  2
+
+_Static_assert(MS_TO_TIMERUNITS(BLINK_UNITS * LED_UNIT_MS) <= BURST_TU,
+               "a blink that starts a burst must fit in it, or led_off() always truncates");
+
+static void blink(uint8_t channel)
+{
+    const uint8_t pattern[] = { LED_STEP(channel, BLINK_UNITS), 0x00 };
+    led_play(pattern, sizeof pattern);
+}
 
 /*
  * Drop into the failsafe by invalidating the primary image, then resetting.
  *
  * The offset is NOT a guess and there is NO product header on this ring: the
  * ring's own firmware translates the Telesto record 0x40060000 to physical 0x5000
- * (FUN_07fc3b48 in the stock app, FUN_07fc2df0 in the failsafe), and the dump in
- * failsafe-recovery-test/materials/ confirms it byte-for-byte. The boot validates
+ * (FUN_07fc3b48 in the stock app, FUN_07fc2df0 in the failsafe), and a BLE dump of a
+ * real ring's flash confirms it byte-for-byte. The boot validates
  * a single image header there — sig 0x7051 + validflag 0xAA at +2 — so clearing
  * that one byte is enough. An earlier version of this hook searched for an
  * AN-B-001 product header (sig 0x7052) at the SDK's 0x38000; that structure does
@@ -246,9 +459,15 @@ static void flash_on(void)
  * board_config.h), so there is nothing to hand back — this only deasserts CS.
  *
  * ponytail: the ring's own firmware also parks the flash in deep power-down here
- * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not, because the
- * CFW touches flash only during recovery and the extra idle current is irrelevant
- * next to always-on BLE. Add it if a power budget ever says otherwise. */
+ * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not — and the reason
+ * is NOT that idle current does not matter. It does: this firmware sleeps with the
+ * radio off between clicks, so a flash idling at tens of microamps would dominate a
+ * SoC idling at a few. What saves us is accidental. Extended sleep drops the pad
+ * configuration, so P0_4/P0_3 fall back to their reset mode and stop powering the chip
+ * without anyone asking — the same mechanism that forced led_reapply() and that puts
+ * the button pull-up in set_pad_functions(). Which makes flash_on() re-driving those
+ * pins on every call load-bearing, not defensive. Send the 0xB9 if the flash ever has
+ * to survive a sleep powered. */
 static void flash_off(void)
 {
     GPIO_ConfigurePin(FLASH_PORT, FLASH_EN_PIN, OUTPUT, PID_GPIO, true);
@@ -277,6 +496,11 @@ static void bootlog_clear(void)
     static const uint8_t magic[4] = { 0xAD, 0xDE, 0xAD, 0xDE };  /* 0xDEADDEAD LE */
 
     flash_on();
+    /* The erase blocks for 50-300 ms inside a watchdog window that periph_init armed and
+     * the SDK only reloads after app_on_init returns (arch_system.c), with ble_init and
+     * the RCX calibration already spent from it. Reload first: a slow sector must not
+     * turn a healthy boot into the NMI path. */
+    wdg_reload(WATCHDOG_DEFAULT_PERIOD);
     spi_flash_block_erase(BOOTLOG_ADDR, SPI_FLASH_OP_SE);
     spi_flash_page_program((uint8_t *)magic, BOOTLOG_ADDR, sizeof magic);
     flash_off();
@@ -299,30 +523,289 @@ void enter_failsafe(void)
     platform_reset(0);
 }
 
-static void click_reset(void)   /* no new click within CLICK_WINDOW => start over */
+/* No new click within CLICK_WINDOW => start the count over. Task context, so the click
+ * ISR can preempt it. The guard closes the tear between the two writes; what it cannot
+ * close is the usual dispatch window before the first one — a click landing there has
+ * its count and fresh gap timer undone here, and the orphaned timer can wipe a retry
+ * too. Bounded and recoverable: the gesture just takes another run. The timer-slot
+ * mechanics, and the cancel-before-allocate order that keeps the stale cancel here
+ * harmless, are documented ONCE, at on_wakeup. */
+static void click_reset(void)
 {
+    GLOBAL_INT_DISABLE();
     click_timer = EASY_TIMER_INVALID_TIMER;
     fast_clicks = 0;
+    GLOBAL_INT_RESTORE();
 }
 
-static void on_wakeup(void)
+/*
+ * Hold to record — and the same hold is the last-resort reset when the firmware is not
+ * answering. por_disarm() below is what separates them: healthy firmware sees the hold,
+ * disarms the silicon reset and records; wedged firmware never gets here, the POR keeps
+ * counting, and the chip reboots at ~5 s. One gesture, and the right thing happens in
+ * both states with nothing for the user to remember.
+ *
+ * HOLD_TICKS is an ergonomics constant, not a derived one: it has to feel instant on a
+ * deliberate hold while staying clear of a tap, which people do in 50-150 ms. 300 ms was
+ * the starting point and 500 ms is what the bench settled on — it is a number that can
+ * only be judged by feel, so it stays one number in one place. It cannot go to zero — the red can only appear once the firmware
+ * KNOWS the press is a hold, and lighting it on the press instead would put a red
+ * flicker in front of every click and blur the two gestures again.
+ *
+ * It must also stay comfortably under the POR's ~5 s (see por_arm) so healthy firmware
+ * always disarms first.
+ */
+#define HOLD_TICKS 50                   /* 500 ms, in 10 ms timer units */
+
+/* The relation the whole gesture rests on: healthy firmware must see the hold and
+ * disarm long before the silicon reset lands. The factor of two is not caution for its
+ * own sake — the POR runs off an uncalibrated RC oscillator, so its window is a range
+ * (see POR_HOLD_MS_NOMINAL). And it is the assert rather than the comment that keeps
+ * this true when someone lengthens the hold to fight accidental taps. */
+_Static_assert(HOLD_TICKS * 10 * 2 <= POR_HOLD_MS_NOMINAL,
+               "HOLD_TICKS too close to the POR: a hold would reset instead of record");
+
+static timer_hnd hold_timer = EASY_TIMER_INVALID_TIMER;
+
+/* The capture loop's stop signal: the release interrupt clears `recording`. */
+static bool still_recording(void)
 {
-    if (armed_for_release) {            /* this wake is the release */
-        button_rearm();                 /* pin is up now -> arm for the next press */
+    return recording;
+}
+
+static void hold_detected(void)
+{
+    hold_timer = EASY_TIMER_INVALID_TIMER;
+
+    /* The release can land in the dispatch window before this callback's first line —
+     * and it settles the press as a CLICK (recording still false), so recording here
+     * would capture with no finger on the button until the buffer filled. The pin
+     * answers: up means the click path already ran. Checked and set under one guard so
+     * a release cannot slip between the two; one landing just after clears `recording`
+     * again and the refusal below turns the stale hold into a no-op. */
+    bool held;   /* outside the guard: DISABLE/RESTORE are a brace pair, its own scope */
+    GLOBAL_INT_DISABLE();
+    held = GPIO_GetPinStatus(BTN_PORT, BTN_PIN) == 0;   /* active-low */
+    /* Refused while a link is up, not only during a transfer: mic_capture owns the task
+     * context for up to 6.1 s, so every GATT message — the phone's fetch included —
+     * would sit undispatched under a live connection, and the BLE ISRs preempting the
+     * poll loop stretch the measured-unloaded sample clock into pitch-warped audio. */
+    recording = held && !clip_tx_busy() && !app_env[0].connection_active;
+    hold_served = recording;    /* same condition, so a REFUSED hold still ends as a
+                                 * click on release, exactly as before the split */
+    GLOBAL_INT_RESTORE();
+    if (!held) {
         return;
     }
 
-    /* one click */
+    /* Disarmed because the gesture was SEEN, not because a recording succeeded. A
+     * legitimate refusal to record must never reboot the device; what the POR tests is
+     * whether the firmware responds at all.
+     *
+     * A release racing past the guard above has already re-armed, so this disarms
+     * again and the ring sits net-off with the button up until the next wake re-arms
+     * it (which is why the arm lives in set_pad_functions). Chosen over moving the
+     * disarm below the refusal, which would close that sliver by breaking the rule
+     * this comment states. Same stale pass, same sliver: the reset below also eats a
+     * rapid-click run in progress, since the press was consumed as a hold. */
+    por_disarm();
+    fast_clicks = 0;                    /* a hold is not part of a rapid-click run */
+
+    /* A transfer is reading the very buffer a recording would overwrite. Refuse rather
+     * than corrupt what is already on its way out; the POR stays disarmed either way,
+     * because the firmware DID see the gesture. (Also the exit for a release that raced
+     * the guard above.) */
+    if (!recording) {
+        return;
+    }
+    led_hold(LED_RECORD);          /* stays lit: a pattern would end on its own */
+
+    /* A running burst is stopped before recording, never recorded under. The capture
+     * loop's sample clock is its own timing (board_config.h), measured with the radio
+     * off; the radio's interrupts preempting it would stretch that clock and warp the
+     * pitch. An advertiser is also connectable, so a phone fetching on sight could take
+     * a link into a host that will not answer for six seconds. The cancel is a kernel
+     * message and the kernel runs in this very task context, so it cannot complete
+     * while a blocking loop runs here: the capture is handed to the burst-end handler,
+     * where the completion arrives. The SDK's own timeout timer is stopped too, or it
+     * fires a second cancel later at nothing.
+     *
+     * A hold from idle — the common path — has no burst to stop and records at once. */
+    if (advertising) {
+        capture_pending = true;
+        app_easy_gap_advertise_with_timeout_stop();
+        app_easy_gap_advertise_stop();
+        return;
+    }
+    capture();
+}
+
+/* The recording itself, and the beacon that announces it. Task context, with the air
+ * quiet: straight from hold_detected, or from the burst-end handler once the burst a
+ * hold cancelled has actually ended. */
+static void capture(void)
+{
+    /* Blocks here for the whole recording. The release interrupt still runs — it is an
+     * interrupt — and clearing `recording` is what ends the loop below. Advertising the
+     * result therefore belongs here, after the count exists, not in the release path. */
+    (void)mic_capture(still_recording);
+
+    /* The capture is over — by release or by a full buffer — so the reasons to stay
+     * awake are too. Doing this here rather than in the release path is the whole point
+     * of hold_served: a finger that stays down after the buffer fills no longer keeps
+     * the radio and the CPU up with it. Idempotent when the release already ran. */
+    recording = false;
+    arch_set_sleep_mode(app_default_sleep_mode);
+
+    /* The light goes out when RECORDING ends, which is not the same moment the button
+     * comes up: the buffer holds a few seconds and fills while a finger is still down.
+     * Leaving the release path to do it meant the ring looked like it was still
+     * recording long after it had stopped, with no way to tell. Harmless if the release
+     * already ran — led_off does nothing when nothing is lit. The POR stays disarmed
+     * until the button actually comes up, because a hold should never reset a ring that
+     * is plainly alive. */
+    led_off();
+
+    /* The advertisement is how the phone learns a clip exists: refresh_clip_count has
+     * just read the new sample count, and non-zero is the whole signal. `advertising` is
+     * false here — a hold from idle had no burst, a hold on a burst waited for its end —
+     * so this takes the start path and the count gets a full BURST_TU on air. */
+    refresh_clip_count();
+    advertise_click(click_count);
+}
+
+/*
+ * The click itself — counting, the failsafe run, the beacon. Runs on RELEASE, because
+ * a press is ambiguous: a click and a hold are the same event until the button comes
+ * back up.
+ *
+ * ORDER IS LOAD-BEARING: every cancel first, every allocation after. This is the ONE
+ * place the timer-slot mechanics live; led_run and click_reset point here.
+ *
+ * AND ALL OF IT RUNS IN INTERRUPT CONTEXT, calling into the SDK's kernel-message
+ * machinery: app_easy_timer allocates a message, so does app_easy_gap_update_adv_data,
+ * and so does stage_adv via app_easy_gap_undirected_advertise_get_active. ke_malloc
+ * lives in the ROM library (da14535_symbols.lds) with no source to read — but the SDK's
+ * own design does the same: app_easy_wakeup() sends a kernel message and is registered
+ * right beside the wkupct callback in the vendor examples (app_easy_msg_utils.c), so
+ * allocating from this ISR is what the vendor relies on, not a bet of ours.
+ *
+ * What does NOT belong here is any peripheral the SDK also drives from task context.
+ * The GP_ADC did, as a 4 ms level burst per click, until conditionally_run_radio_cals
+ * (arch_system.c) turned out to poll that same converter every 2 s while awake: a burst
+ * landing inside its poll hands it a microphone sample as the die temperature, or
+ * leaves it spinning on a converter this path had just disabled — into the watchdog,
+ * the NMI and the failsafe. The microphone is read from task context only (capture),
+ * where the two cannot overlap.
+ *
+ * app_easy_timer handles carry no identity — cancel acts on a bare slot index, a slot
+ * is freed BEFORE its callback runs, and allocation reuses the lowest free slot
+ * (app_easy_timer.c). So when this ISR preempts a timer callback at dispatch, the
+ * handle we still hold for it points at a free slot: cancelling it now is an
+ * ASSERT_WARNING no-op, but an allocation made first can take that very slot and be
+ * cancelled in its place. That cross-kill is not hypothetical — with the blink leading,
+ * the fresh gap timer died in the LED's freed slot, click_reset never ran, and slow
+ * clicks accumulated into an unasked-for failsafe.
+ */
+static void handle_click(void)
+{
     click_count++;
+    led_cancel();                       /* the LED's cancel, split from its darkness so
+                                         * it cannot be "simplified" away as redundant */
     if (++fast_clicks >= CLICKS_TO_FAILSAFE) {
         fast_clicks = 0;
         enter_failsafe();               /* 5 fast taps => recovery (resets; no-op is benign) */
     } else {
         if (click_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(click_timer);
         click_timer = app_easy_timer(CLICK_WINDOW, click_reset);  // run expires on a gap
+        if (click_timer == EASY_TIMER_INVALID_TIMER) {
+            /* Out of timer slots, so nothing will ever expire this run. Leaving
+             * fast_clicks armed is the unsafe half of that: clicks would keep
+             * accumulating across arbitrary gaps until the fifth dropped the ring into
+             * the failsafe. Start the count over instead — a missed gesture is cheap,
+             * an unasked-for recovery is not. led_run makes the same call for the same
+             * reason.
+             *
+             * ponytail: under SUSTAINED exhaustion this disables the gesture outright,
+             *           because the reset only ever lands on clicks 1-4 (the fifth
+             *           allocates nothing). Acceptable while exhaustion stays a
+             *           transient: the pool is 10, a press-and-release holds at most a
+             *           hold timer, a gap timer, an LED timer and the SDK's adv timer,
+             *           and the scheduler drains
+             *           cancelled slots between clicks. If it ever stops being
+             *           transient, keep the count at CLICKS_TO_FAILSAFE - 1 instead of
+             *           special-casing anything earlier. */
+            fast_clicks = 0;
+        }
     }
+    /* Not while a transfer owns the LED: a 100 ms flash would replace the transfer's
+     * light and leave it dark for the rest of the send, which says something false. */
+    if (!clip_tx_busy()) {
+        blink(LED_CLICK);               /* its own cancel is a no-op: led_cancel led */
+    }
+    refresh_clip_count();               /* a delivered clip must stop being advertised */
     advertise_click(click_count);       /* refresh active burst or start a new one */
-    button_rearm();                     /* still held -> wait for release; already up -> next press */
+    button_rearm();
+}
+
+/*
+ * A press decides nothing. It starts the clock that tells a click from a hold, and
+ * that is all it may do — doing the click here is what made a hold also count as a
+ * click and flash the click colour before the recording colour.
+ *
+ * Keeping this path short also nearly closes the race the old code lived with. The
+ * press handler used to run the whole click, several milliseconds of it, and a release
+ * inside that window slipped past the re-arm and was lost. What little window remains
+ * is closed outright below: if the button is already back up when we re-arm, the
+ * release has happened and no second wake is coming, so the click is settled here
+ * instead of dropped. button_rearm() reads the pin live, so armed_for_release says
+ * exactly that.
+ */
+static void on_wakeup(void)
+{
+    if (armed_for_release) {            /* the release: now we know which gesture it was */
+        if (hold_timer != EASY_TIMER_INVALID_TIMER) {
+            app_easy_timer_cancel(hold_timer);
+            hold_timer = EASY_TIMER_INVALID_TIMER;
+        }
+        if (hold_served) {              /* the hold clock ran out: it was a hold */
+            hold_served = false;
+            /* Also the capture's stop signal, and the disarm for a hold_detected still
+             * sitting in the dispatch window — its refusal below tests this flag. */
+            recording = false;
+            if (!clip_tx_busy()) {      /* a transfer may own the LED by now: the buffer
+                                         * can fill, and the phone start pulling, while
+                                         * the finger is still down */
+                led_off();
+            }
+            por_arm();                  /* the net is back before the button is idle */
+            button_rearm();                 /* hold_detected advertises once its loop ends */
+            return;
+        }
+        handle_click();                 /* it did not: a click */
+        return;
+    }
+
+    /* Cancel only, no darkness: a transfer may own the light. A press inside a click's
+     * 100 ms flash therefore holds that flash until the release settles the gesture and
+     * drives the pads again — cosmetic, and every path out of here ends in a led_set. */
+    led_cancel();
+    if (hold_timer != EASY_TIMER_INVALID_TIMER) app_easy_timer_cancel(hold_timer);
+    hold_timer = app_easy_timer(HOLD_TICKS, hold_detected);
+    /* ponytail: unchecked on purpose. With the pool exhausted there is no hold
+     *           detection, so the POR stays armed and a long hold becomes the silicon
+     *           reset at ~5 s — the right failure for a ring too wedged to run timers.
+     *           A tap is still a click via the release path below. */
+    button_rearm();
+
+    if (!armed_for_release) {
+        /* Already back up — too fast for a hold, and no release wake will arrive. */
+        if (hold_timer != EASY_TIMER_INVALID_TIMER) {
+            app_easy_timer_cancel(hold_timer);
+            hold_timer = EASY_TIMER_INVALID_TIMER;
+        }
+        handle_click();
+    }
 }
 
 void app_on_init(void)
@@ -333,10 +816,19 @@ void app_on_init(void)
     /* Satisfy the anti-brick contract once boot is stable; TARGET_KIT uses its
      * AT25XE021A, while the ring uses its mapped flash. */
     bootlog_clear();
+
+    /* Without this the boot burst carries flags and the device name and nothing else:
+     * USER_ADVERTISE_DATA is empty and app.c only appends the name, so the manufacturer
+     * data that IDENTIFIES a CFW ring first appears on the first click. The phone keys
+     * on company 0xFFFF — name and service UUID are explicitly not reliable for this —
+     * so the ring spent its first three seconds unrecognisable, which is exactly when
+     * you most want to see that the firmware came up: after a reflash, after the POR
+     * gesture, on the way back from the failsafe. */
+    stage_adv(click_count);
+
     wkupct_register_callback(on_wakeup);
     button_rearm();                     /* pin idle-high at boot -> arms for the first press */
-    /* Bonus recovery net: holding the button ~POR_HOLD_TICKS (~2.5 s) POR-resets the
-     * chip from any RUNNING state, e.g. if the app ever hangs. Active-low. A tap
-     * stays a click; 5 fast taps stay the failsafe. */
-    GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);
+    /* The POR is armed from set_pad_functions(), not here: periph_init re-runs on every
+     * wake, so a path that forgets to re-arm loses the net until the next sleep instead
+     * of silently forever. */
 }

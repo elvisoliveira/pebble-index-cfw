@@ -18,6 +18,10 @@ add_executable(${PROJECT_NAME}
     src/user_app.c
     src/ble_handlers.c
     src/cfw_ctrl.c
+    src/led.c
+    src/clip_tx.c
+    src/adpcm.c
+    src/mic.c
 )
 
 set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -flto -Wall -Werror -g3)
@@ -33,8 +37,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 # Board/feature defines, injected from the command line. Empty = the shipping RING build.
-# For the DA14535 devkit bench build:  -DKIT_DEFS=TARGET_KIT   (SW2 button P0_11 + kit flash pins).
-# Add KIT_BTN_EXT for an external button on P0_7:  -DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT".
+# For the DA14535 devkit bench build:  -DKIT_DEFS=TARGET_KIT
+# (button P0_11 = J4 "INT" = SW2's pin, kit flash pins, RGB LED on P0_9/P0_8/P0_6).
+# board_config.h is the authority on the pinout; keep this line in step with it.
 # See board_config.h (TARGET_KIT) and da1458x_config_basic.h (WITH_CTRL_POINT, default on).
 if(DEFINED KIT_DEFS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ${KIT_DEFS})

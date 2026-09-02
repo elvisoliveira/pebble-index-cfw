@@ -33,7 +33,12 @@
 // #define NON_RET_HEAP_SZ         2048
 
 /* NVDS defaults: bdaddress (ignored if OTP has one), LP clock drift (ppm), channel
- * assessment timers/thresholds. */
+ * assessment timers/thresholds.
+ *
+ * The address is the SDK's stock one, not ours. Every board whose OTP carries no
+ * address falls back to it — the kit may be one — so two such boards in range look like
+ * ONE device to a scanner, and the phone's click-delta accumulator would merge them. The
+ * ring is expected to carry its own in OTP. */
 #define CFG_NVDS_TAG_BD_ADDRESS             {0x03, 0x69, 0x70, 0xCA, 0xEA, 0x80}
 
 #define CFG_NVDS_TAG_LPCLK_DRIFT            DRIFT_500PPM

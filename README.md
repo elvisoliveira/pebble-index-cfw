@@ -8,19 +8,25 @@ A minimal alternative firmware for the **Pebble Index 01** smart ring
 
 ## What it does
 
-It is intentionally *featureless*: a small, working foundation rather than a
-replacement for the official firmware. Out of the box it:
+It is a small, working foundation rather than a replacement for the official
+firmware. Out of the box it:
 
 - Advertises over BLE as **`Pebble Index CFW`**.
 - Counts button presses and exposes the count in its advertising data, so a
   click is visible from any BLE scanner without connecting.
-- Uses a slow advertising interval to keep battery drain low while staying
-  discoverable.
+- Stays silent when idle. The ring sleeps with the radio off and wakes on the
+  button, then advertises in a short, fast burst — a low duty cycle rather than
+  a slow interval.
+- Blinks its RGB LED, one colour at a time: a flash to acknowledge a click, a
+  steady light while recording, another while a clip is being sent.
+- **Records audio** from the ring's microphone while the button is held, up to
+  6.1 seconds, and hands the clip to a phone over BLE.
 - Can hand the ring back to its **failsafe** image with a gesture (five quick
   clicks) or a BLE command. It never touches the failsafe bootloader (see
   [Can it brick?](#can-it-brick)).
 
-That is the whole feature set.
+That is the whole feature set. Everything here is a peripheral the ring already
+has, driven the way its own firmware drives it.
 
 ## How it fits on the ring
 
@@ -72,15 +78,33 @@ past all of that and then lose both the button and BLE. The releases here
 should not be able to do that. Still, that is why this README says
 "recoverable" and not "unbrickable".
 
+## Security
+
+There is none, and for now that is deliberate. The CFW does not pair or bond (BLE
+security is compiled out), and its GATT Control Point accepts writes from any central
+in range. Two things follow:
+
+- Anyone in range can pull the last recording off the ring over BLE, the same way the
+  companion app does. Treat a clip as public until it has been fetched and released.
+- Anyone in range can send the failsafe command and drop the ring into recovery mode.
+  That is recoverable (the official Pebble app reinstalls the stock firmware), but it
+  is a remote reset with no confirmation.
+
+Both were acceptable for a click counter; they are worth knowing about now that the
+ring records audio. Bonding or a simple unlock token would close them; neither is
+implemented yet.
+
 ## Test kit
 
 Before flashing a ring, the firmware is validated on the
 **DA14535-00FXDEVKT-U** (SmartBond DA14535 USB Development Kit). It carries the
 **same SoC as the ring** (DA14535), so BLE and the click counter are exercised
-on real silicon first. On the kit the button is the on-board **SW2 (P0_11)** by
-default; build with `-DKIT_DEFS="TARGET_KIT;KIT_BTN_EXT"` to use an external
-momentary button on **P0_7** (MikroBUS J3 pin 3 to GND) instead. On the ring the
-button is P0_1.
+on real silicon first. Build it with `-DKIT_DEFS=TARGET_KIT`.
+
+The kit button is **P0_11**, which is the on-board **SW2**. SW2 is a tiny
+surface-mount button, so for repeated clicking you can wire a normal momentary
+button to **J4 `INT`** (P0_11) and ground: it sits in parallel with SW2, and both
+work. On the ring the button is P0_1.
 
 ## Building
 
@@ -119,4 +143,7 @@ How firmware is actually written over Bluetooth is documented in the
 
 MIT, see [`LICENSE`](LICENSE). Based on
 [stawiski/da14531-cmake-template](https://github.com/stawiski/da14531-cmake-template).
-The Renesas DA145xx SDK is proprietary and used under its own license.
+The Renesas DA145xx SDK is proprietary and used under its own license. Two linker
+scripts under `gcc/` (`mem_DA14531.lds`, `ldscript_DA14531.lds.S`) are Dialog's,
+carried over from that template and lightly adapted; they keep their original copyright
+notice and are not covered by the MIT license.

@@ -15,8 +15,8 @@
 /* Unlisted members are NULL (no handler). */
 static const struct app_callbacks user_app_callbacks = {
     .app_on_connection                  = default_app_on_connection,
-    .app_on_disconnect                  = default_app_on_disconnect,
-    .app_on_set_dev_config_complete     = user_on_set_dev_config_complete,
+    .app_on_disconnect                  = user_on_disconnect,   /* releases a transfer cut short */
+    .app_on_set_dev_config_complete     = default_app_on_set_dev_config_complete,
     .app_on_adv_undirect_complete       = user_on_adv_undirect_complete,
     .app_on_db_init_complete            = default_app_on_db_init_complete,
     .app_on_get_dev_name                = default_app_on_get_dev_name,
@@ -29,8 +29,11 @@ static const struct app_callbacks user_app_callbacks = {
 
 #define app_process_catch_rest_cb       user_catch_rest_hndl
 
+/* Our wrapper, not the SDK's default_advertise_operation: the SDK starts advertising
+ * from paths we never call — after the GATT database is built, and after every
+ * disconnect — and the burst model needs to know when that happens. See user_app.c. */
 static const struct default_app_operations user_default_app_operations = {
-    .default_operation_adv = default_advertise_operation,
+    .default_operation_adv = user_advertise_operation,
 };
 
 static const struct arch_main_loop_callbacks user_app_main_loop_callbacks = {
