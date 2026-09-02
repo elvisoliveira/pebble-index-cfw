@@ -7,6 +7,12 @@
  * the air is not a lost click: the counter kept climbing, so the next advertisement
  * carries the higher value and the phone adds the whole jump.
  *
+ * The contract ends where the counter stops climbing: it is a uint8_t in RAM, so a
+ * reboot restarts it at zero and a difference taken across that boundary is nonsense —
+ * 200 to 0 reads as 56 clicks that never happened. Reboots are not hypothetical here
+ * (the POR gesture, the NMI, coming back from the failsafe), and nothing on either side
+ * detects one. Living with it beats the retained counter it would take to fix.
+ *
  * Model: BURST-FROM-SLEEP — silent when idle (extended sleep, radio off, the wkupct
  * is the only wake source); each click fires a short, FAST advertising burst carrying
  * the new counter, then the device idles again.
@@ -120,6 +126,18 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
     return ADV_MFR_LEN + ADV_NAME_LEN;
 }
 
+/*
+ * Write the payload into the command the SDK will send the next time it starts
+ * advertising. app.c keeps one such message in adv_cmd and only lets go of it when an
+ * advertising start actually consumes it, so staging is durable: whoever starts next
+ * carries this, whether that is a click, the boot, or default_app_on_disconnect.
+ */
+static void stage_adv(uint8_t counter)
+{
+    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
+    cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
+}
+
 /* BURST_TU: advertise this long after a click, then stop (timer units, 10 ms each). */
 #define BURST_TU  MS_TO_TIMERUNITS(3000)
 
@@ -216,9 +234,7 @@ static void advertise_click(uint8_t counter)
         return;
     }
 
-    /* Set the active command before starting, so the first packet is complete. */
-    struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
-    cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
+    stage_adv(counter);         /* before starting, so the first packet is complete */
     if (connected) {
         return;
     }
@@ -403,9 +419,15 @@ static void flash_on(void)
  * board_config.h), so there is nothing to hand back — this only deasserts CS.
  *
  * ponytail: the ring's own firmware also parks the flash in deep power-down here
- * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not, because the
- * CFW touches flash only during recovery and the extra idle current is irrelevant
- * next to always-on BLE. Add it if a power budget ever says otherwise. */
+ * (cmd 0xB9) and wakes it with 0xAB + 30 us in flash_on(). We do not — and the reason
+ * is NOT that idle current does not matter. It does: this firmware sleeps with the
+ * radio off between clicks, so a flash idling at tens of microamps would dominate a
+ * SoC idling at a few. What saves us is accidental. Extended sleep drops the pad
+ * configuration, so P0_4/P0_3 fall back to their reset mode and stop powering the chip
+ * without anyone asking — the same mechanism that forced led_reapply() and that puts
+ * the button pull-up in set_pad_functions(). Which makes flash_on() re-driving those
+ * pins on every call load-bearing, not defensive. Send the 0xB9 if the flash ever has
+ * to survive a sleep powered. */
 static void flash_off(void)
 {
     GPIO_ConfigurePin(FLASH_PORT, FLASH_EN_PIN, OUTPUT, PID_GPIO, true);
@@ -491,10 +513,11 @@ static void click_reset(void)
 #define HOLD_TICKS 50                   /* 500 ms, in 10 ms timer units */
 
 /* The relation the whole gesture rests on: healthy firmware must see the hold and
- * disarm long before the silicon reset lands. Twice over is the margin, and it is the
- * assert rather than the comment that keeps it true when someone lengthens the hold to
- * fight accidental taps. */
-_Static_assert(HOLD_TICKS * 10 * 2 <= POR_HOLD_MS,
+ * disarm long before the silicon reset lands. The factor of two is not caution for its
+ * own sake — the POR runs off an uncalibrated RC oscillator, so its window is a range
+ * (see POR_HOLD_MS_NOMINAL). And it is the assert rather than the comment that keeps
+ * this true when someone lengthens the hold to fight accidental taps. */
+_Static_assert(HOLD_TICKS * 10 * 2 <= POR_HOLD_MS_NOMINAL,
                "HOLD_TICKS too close to the POR: a hold would reset instead of record");
 
 static timer_hnd hold_timer = EASY_TIMER_INVALID_TIMER;
@@ -581,6 +604,17 @@ static void hold_detected(void)
  *
  * ORDER IS LOAD-BEARING: every cancel first, every allocation after. This is the ONE
  * place the timer-slot mechanics live; led_run and click_reset point here.
+ *
+ * AND ALL OF IT RUNS IN INTERRUPT CONTEXT, calling into the SDK's kernel-message
+ * machinery: app_easy_timer allocates a message, so does app_easy_gap_update_adv_data,
+ * and so does stage_adv via app_easy_gap_undirected_advertise_get_active. ke_malloc
+ * lives in the ROM library with no source to read, and the SDK says nothing about
+ * calling it from an ISR. If it does not take a critical section, an interrupt landing
+ * inside a task-context allocation corrupts the heap. Bench time is not evidence
+ * either way — the window is only as wide as the main loop is awake, which is barely.
+ * The work stays here because it must (enter_failsafe on the fifth click has to be
+ * synchronous), but anyone MOVING MORE WORK INTO THIS PATH is betting on that
+ * assumption, and should know they are.
  *
  * app_easy_timer handles carry no identity — cancel acts on a bare slot index, a slot
  * is freed BEFORE its callback runs, and allocation reuses the lowest free slot
@@ -698,6 +732,16 @@ void app_on_init(void)
     /* Satisfy the anti-brick contract once boot is stable; TARGET_KIT uses its
      * AT25XE021A, while the ring uses its mapped flash. */
     bootlog_clear();
+
+    /* Without this the boot burst carries flags and the device name and nothing else:
+     * USER_ADVERTISE_DATA is empty and app.c only appends the name, so the manufacturer
+     * data that IDENTIFIES a CFW ring first appears on the first click. The phone keys
+     * on company 0xFFFF — name and service UUID are explicitly not reliable for this —
+     * so the ring spent its first three seconds unrecognisable, which is exactly when
+     * you most want to see that the firmware came up: after a reflash, after the POR
+     * gesture, on the way back from the failsafe. */
+    stage_adv(click_count);
+
     wkupct_register_callback(on_wakeup);
     button_rearm();                     /* pin idle-high at boot -> arms for the first press */
     /* The POR is armed from set_pad_functions(), not here: periph_init re-runs on every

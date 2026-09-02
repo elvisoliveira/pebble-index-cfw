@@ -23,16 +23,22 @@ void periph_init(void);
 void por_arm(void);
 
 /*
- * The POR hold, in units of 4096 RC32K periods — 125 ms each, a 7-bit field, so ~16 s is
- * the hardware ceiling. 40 puts the reset at ~5 s.
+ * The POR hold, in units of 4096 RC32 periods (gpio.h: time = por_time x 4096 x RC32
+ * period), a 7-bit field, so ~16 s is the hardware ceiling. 40 is nominally ~5 s.
  *
- * Public because it is half of a relation the other half of which lives in user_app.c:
- * the hold that starts a recording must expire well before this, or every hold reboots
- * the ring instead of recording. That was stated in prose in two files and enforced
- * nowhere; user_app.c now asserts it.
+ * NOMINALLY is the word, and the macro name says so: RC32 is an uncalibrated RC
+ * oscillator, not a crystal. The SDK does not state its frequency, 4096 periods is
+ * ~128 ms at a nominal 32 kHz, and the real figure moves with temperature and supply.
+ * Treat the window as a range of several seconds around 5, never as a deadline.
+ *
+ * Public because it is half of a relation whose other half lives in user_app.c: the
+ * hold that starts a recording must expire well before this, or every hold reboots the
+ * ring instead of recording. That was prose in two files and enforced nowhere; the
+ * assert there is sized for the spread above, which is why it asks for 2x and not a
+ * few percent.
  */
-#define POR_HOLD_TICKS 40
-#define POR_HOLD_MS    (POR_HOLD_TICKS * 125)
+#define POR_HOLD_TICKS      40
+#define POR_HOLD_MS_NOMINAL (POR_HOLD_TICKS * 128)
 
 /*
  * Disarm it. Called when the firmware has PROVEN it saw a button hold — which is the
