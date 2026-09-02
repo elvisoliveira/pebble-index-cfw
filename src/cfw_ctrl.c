@@ -3,8 +3,8 @@
 #include <clip_tx.h>
 #include <mic.h>
 
-/* Opcodes are documented in cfw_ctrl.h. The old raw-flash escape hatch is gone;
- * recovery-by-address remains in bench/cfw-enter-failsafe.py. */
+/* Opcodes are documented in cfw_ctrl.h. The old raw-flash escape hatch (write to an
+ * address) is gone; the flasher app covers recovery over BLE. */
 void cfw_ctrl_write(uint8_t conidx, const uint8_t *data, uint16_t len)
 {
     if (len == 0) {

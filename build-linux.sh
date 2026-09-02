@@ -7,5 +7,5 @@ if [ "$#" -ne 2 ]; then
 fi
 
 rm -rf build
-cmake -DDEVICE_NAME=DA14531_App -DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_TOOLCHAIN_FILE=gcc/arm-none-eabi.cmake -DGCC_TOOLCHAIN_PATH=$1 -DDIALOG_SDK_PATH=$2 -S . -B build
+cmake -DDEVICE_NAME=DA14531_App -DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_TOOLCHAIN_FILE=gcc/arm-none-eabi.cmake -DGCC_TOOLCHAIN_PATH="$1" -DDIALOG_SDK_PATH="$2" -S . -B build
 cmake --build build -j

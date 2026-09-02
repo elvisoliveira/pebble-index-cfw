@@ -77,12 +77,12 @@
      *
      * Two consequences for anything that reads this microphone:
      *
-     *   - mic_read's burst is ~4 ms, FOUR attack times. The AGC has already compressed
-     *     before the burst ends, so pp is always an AGC-flattened number. It is the
-     *     attack that does this, not the release.
-     *   - after any loud sound the gain stays down for ~4.4 s, so two clicks in a row
-     *     do not produce comparable levels. Not a dead microphone; the instrument
-     *     recovering.
+     *   - the bias burst that opens a capture is ~4 ms, FOUR attack times. Anything
+     *     measured over it is already AGC-compressed. It is the attack that does this,
+     *     not the release.
+     *   - after any loud sound the gain stays down for ~4.4 s, so two recordings in a
+     *     row do not start from comparable levels. Not a dead microphone; the
+     *     instrument recovering.
      *
      * THE RING HAS NO AGC AT ALL. So the pumping this module adds to a recording — the
      * gain ducking on a loud syllable and taking seconds to come back, which the
@@ -90,7 +90,8 @@
      * product. Do not tune the capture path against it. If a flat reference is ever
      * wanted, the datasheet's own switch is TH tied to MICBIAS, which disables the AGC
      * outright. What the two boards DO share is that neither has any anti-aliasing:
-     * both are flat well past the ~11 kHz the converter free-runs at. */
+     * both are flat well past the ~14 kHz the converter free-runs at
+     * (MIC_SOURCE_RATE_HZ). */
     #define MIC_ADC_ATTN   ADC_INPUT_ATTN_3X   /* 0-2.7 V */
     /* Same 14160 as the ring, and for a reason rather than a copy: the fixed point is
      * set by the capture loop's own timing (see the ring's entry), and both boards run
@@ -115,8 +116,8 @@
      * rail: 0=LED at 3.0 V, 1=flash at 1.8 V, 2=mic at 1.8 V) — it is listed here
      * because the stock app raises it too, and raising a microphone to read flash costs
      * nothing. Kept rather than dropped so this matches what the ring's own code does;
-     * if it is ever dropped, note that mic_read() drives P0_3 LOW after every click, so
-     * flash_on() would then be the only thing putting it back. */
+     * if it is ever dropped, note that mic.c drives P0_3 LOW after every recording, so
+     * flash_on() is the only other thing that ever raises it. */
     #define FLASH_HAS_PWR_PINS
     #define FLASH_PWR1_PIN GPIO_PIN_4   /* flash VCC */
     #define FLASH_PWR2_PIN GPIO_PIN_3   /* mic VCC — same pin as MIC_PWR_PIN below */
@@ -192,9 +193,6 @@
      * We sampled at 50 us, and worse, measured the DC bias there: a bias read while it
      * is still rising is then subtracted from the whole clip, and the encoder spends
      * six seconds chasing an offset that was never real.
-     *
-     * Capture only. mic_read() runs in the button ISR on every click and cannot carry
-     * 150 ms; it reports a level, and a level off a settling bias is still a level.
      */
     #define MIC_WARMUP_MS  150
     /*

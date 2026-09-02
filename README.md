@@ -78,6 +78,22 @@ past all of that and then lose both the button and BLE. The releases here
 should not be able to do that. Still, that is why this README says
 "recoverable" and not "unbrickable".
 
+## Security
+
+There is none, and for now that is deliberate. The CFW does not pair or bond (BLE
+security is compiled out), and its GATT Control Point accepts writes from any central
+in range. Two things follow:
+
+- Anyone in range can pull the last recording off the ring over BLE, the same way the
+  companion app does. Treat a clip as public until it has been fetched and released.
+- Anyone in range can send the failsafe command and drop the ring into recovery mode.
+  That is recoverable (the official Pebble app reinstalls the stock firmware), but it
+  is a remote reset with no confirmation.
+
+Both were acceptable for a click counter; they are worth knowing about now that the
+ring records audio. Bonding or a simple unlock token would close them; neither is
+implemented yet.
+
 ## Test kit
 
 Before flashing a ring, the firmware is validated on the
@@ -127,4 +143,7 @@ How firmware is actually written over Bluetooth is documented in the
 
 MIT, see [`LICENSE`](LICENSE). Based on
 [stawiski/da14531-cmake-template](https://github.com/stawiski/da14531-cmake-template).
-The Renesas DA145xx SDK is proprietary and used under its own license.
+The Renesas DA145xx SDK is proprietary and used under its own license. Two linker
+scripts under `gcc/` (`mem_DA14531.lds`, `ldscript_DA14531.lds.S`) are Dialog's,
+carried over from that template and lightly adapted; they keep their original copyright
+notice and are not covered by the MIT license.

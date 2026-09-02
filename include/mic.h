@@ -9,12 +9,19 @@
  * The stock app converts single-ended on channel 3 with the 2x attenuator, chopping on
  * and 64x oversampling — see board_config.h for which of those differ per board.
  *
- * Two things live here: a LEVEL (one 4 ms burst, mic_read) and a RECORDING (a blocking
- * poll loop, mic_capture). Neither is the stock firmware's path — it streams
- * continuously at 10 kHz by putting UART2 in internal loopback and chaining three DMA
- * channels, so the character rate clocks the conversions and no CPU runs between
- * samples. That is still worth porting, and mic_capture says exactly when it becomes
- * necessary: the loop below owns the CPU while it runs, radio included.
+ * One thing lives here: a RECORDING (a blocking poll loop, mic_capture). A per-click
+ * LEVEL read used to sit beside it and was removed, because it ran in the button ISR and
+ * the SDK polls this same GP_ADC from task context for its radio temperature calibration
+ * (conditionally_run_radio_cals, every 2 s while awake): an ISR reconfiguring the
+ * converter under that poll hands it a microphone sample as a temperature, or leaves it
+ * spinning on a converter the ISR just disabled. mic_capture runs in task context, the
+ * same context as that poll, so the two cannot overlap.
+ *
+ * This is not the stock firmware's path — it streams continuously at 10 kHz by putting
+ * UART2 in internal loopback and chaining three DMA channels, so the character rate
+ * clocks the conversions and no CPU runs between samples. That is still worth porting,
+ * and mic_capture says exactly when it becomes necessary: the loop below owns the CPU
+ * while it runs.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -39,44 +46,14 @@
  */
 #define MIC_SAMPLE_RATE_HZ  8000
 
-/* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
- * either board, and scaling or thresholding would bake in a guess before the bench has
- * produced one. */
-typedef struct {
-    uint16_t pp;   /* peak-to-peak: how much the signal moved */
-    uint16_t dc;   /* mean: where it sits */
-} mic_reading_t;
-
-/*
- * Take a burst and report both numbers.
- *
- * dc is what tells a dead signal path from a live-but-flat one, and they need very
- * different fixes. A MAX9814 rests at 1.23 V typical — 1.14-1.32 V across parts, so a
- * range rather than a number — which under the kit's 3x attenuator is about 29800
- * counts, and ours measured 29835. The ring's MEMS rests at half whatever VBAT_HIGH is.
- *
- * A dc of roughly zero means nothing is arriving at the pin: wiring, power, the wrong
- * pad — or, on a module that is not this one, an output coupling capacitor. The
- * datasheet says a COUT is REQUIRED to strip MICOUT's 1.23 V; ours plainly has none,
- * which is exactly what an ADC wants, since that bias is our midpoint. A board built to
- * the datasheet would hand us a signal centred on nothing, and it would look identical
- * to a dead one here.
- *
- * A plausible dc with a tiny pp means the signal is there and something is flattening
- * it, which on the kit is the AGC's job description (see board_config.h on the AR pin).
- *
- * Blocks for roughly 4 ms. Powers the microphone on the ring for the duration and
- * leaves it off again.
- */
-mic_reading_t mic_read(void);
-
 /*
  * Record until told to stop, ADPCM-encoded as it goes.
  *
  * A blocking poll loop, which is the whole simplification: adc_get_sample() already
- * converts and waits, mic_read() already proves it works, and this is that loop run
- * long instead of 64 times. The conversion time sets the rate — deterministic, so it
- * can be measured once and written down.
+ * converts and waits, and this is that call run in a loop. The conversion time sets the
+ * rate — deterministic, so it can be measured once and written down. The caller keeps
+ * the radio off for the duration (user_app.c stops a running burst first), because the
+ * BLE interrupts preempting this loop would stretch that clock and warp the pitch.
  *
  * What was tried and does NOT work: the ADC's own continuous mode. Without an interval
  * it does not sustain conversions at all (a five-second hold produced three samples),
@@ -84,7 +61,7 @@ mic_reading_t mic_read(void);
  * why the stock firmware clocks conversions from UART2 in internal loopback through
  * three DMA channels — not cleverness for its own sake, but the only way to get an
  * audio rate out of this ADC. Adopt it when capture has to share the chip with a live
- * radio; this loop cannot, since it blocks everything including BLE.
+ * radio; this loop cannot, since it blocks the host for as long as it runs.
  *
  * keep() is polled every sample and ends the recording when it returns false.
  */

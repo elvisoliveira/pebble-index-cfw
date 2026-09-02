@@ -104,14 +104,18 @@ static const struct connection_param_configuration user_connection_param_conf = 
     .ce_len_max = MS_TO_DOUBLESLOTS(0),
 };
 
+/* How long one advertising burst lasts — the SDK's boot burst below, and the per-click
+ * burst in user_app.c (BURST_TU). One number, so the two cannot drift apart. */
+#define ADV_BURST_MS  3000
+
 static const struct default_handlers_configuration  user_default_hnd_conf = {
-    // BURST experiment: advertise WITH_TIMEOUT (not DEF_ADV_FOREVER) so each burst
+    // Burst model: advertise WITH_TIMEOUT (not DEF_ADV_FOREVER) so each burst
     // auto-stops and the device idles/sleeps. The boot burst uses advertise_period;
-    // per-click bursts use BURST_TU (user_app.c). Keep the two in sync.
+    // per-click bursts use BURST_TU (user_app.c). Both derive from ADV_BURST_MS.
     .adv_scenario = DEF_ADV_WITH_TIMEOUT,
 
-    // Boot burst length (timer units, 10 ms each). Matches BURST_TU in user_app.c.
-    .advertise_period = MS_TO_TIMERUNITS(3000),
+    // Boot burst length (timer units, 10 ms each).
+    .advertise_period = MS_TO_TIMERUNITS(ADV_BURST_MS),
 
     // Never initiate a security request (security is off anyway).
     .security_request_scenario = DEF_SEC_REQ_NEVER

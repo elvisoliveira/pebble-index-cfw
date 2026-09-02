@@ -1,4 +1,4 @@
-/* Microphone level over the GP_ADC — see include/mic.h. */
+/* Microphone recording over the GP_ADC — see include/mic.h. */
 #include <adc.h>            /* before board_config.h: MIC_ADC_* expand to its enums */
 #include <mic.h>
 #include <board_config.h>
@@ -9,17 +9,15 @@
 
 /*
  * One burst. 64 conversions at 64x oversampling is about 4 ms, which spans a couple of
- * cycles of anything above ~250 Hz — enough of a voice to see a peak, and long enough
- * to average a resting level out of one. Both callers want that: mic_read reports the
- * level, mic_capture uses the same burst to find the bias it will subtract.
- *
- * ponytail: this blocks, and mic_read's caller is the button ISR. 4 ms there is well inside
- *           what this app already does in that context (enter_failsafe erases a flash
- *           sector), and a level is a once-per-click measurement, not a stream. The
- *           streaming path has no reason to block at all: it is three DMA channels and
- *           no CPU. Build that when a recording is wanted, not to make this faster.
+ * cycles of anything above ~250 Hz — long enough to average a resting level out of a
+ * voice. mic_capture opens with one to find the bias it will subtract.
  */
 #define MIC_BURST 64
+
+/* Running-DC filter pole, see the capture loop. Corner = rate / (2*pi * 2^shift): at
+ * 8 kHz, shift 4 puts it near 80 Hz — under the lowest voice fundamental, far above the
+ * bias drift it exists to follow. */
+#define DC_SHIFT 4
 
 /* Verbatim the ring's own template (app v3.74, 0x07fc6b34) except the attenuator,
  * which is a board difference. Continuous mode is off: the stock app leaves it off too
@@ -35,11 +33,11 @@ static const adc_config_t mic_cfg = {
     .oversampling     = 6,      /* 2^6 = 64 averaged per conversion, so 16-bit results */
 };
 
-/* Power/settle + ADC bracketing, shared by the level and the capture. One copy on
- * purpose: on the ring MIC_PWR_PIN is P0_3, the flash's second power pin
- * (board_config.h), so this sequence is a shared-rail hardware invariant — two
- * hand-kept copies drifting apart would be a corrupted-first-samples bug that
- * reproduces only on a sealed ring, never on the kit (which has no power pin). */
+/* Power/settle + ADC bracketing. Kept as its own pair rather than inlined into the
+ * capture: on the ring MIC_PWR_PIN is P0_3, the flash's second power pin
+ * (board_config.h), so this sequence is a shared-rail hardware invariant, and a
+ * corrupted-first-samples bug here would reproduce only on a sealed ring, never on the
+ * kit (which has no power pin). */
 static void mic_on(void)
 {
 #ifdef MIC_HAS_PWR_PIN
@@ -58,25 +56,6 @@ static void mic_off(void)
     GPIO_ConfigurePin(MIC_PORT, MIC_PWR_PIN, OUTPUT, PID_GPIO, false);
 #endif
 }
-
-mic_reading_t mic_read(void)
-{
-    mic_on();
-
-    uint16_t lo = 0xFFFF, hi = 0;
-    uint32_t sum = 0;
-    for (uint8_t i = 0; i < MIC_BURST; i++) {
-        uint16_t s = adc_get_sample();
-        if (s < lo) lo = s;
-        if (s > hi) hi = s;
-        sum += s;
-    }
-
-    mic_off();
-    mic_reading_t r = { .pp = hi - lo, .dc = (uint16_t)(sum / MIC_BURST) };
-    return r;
-}
-
 
 /*
  * The clip. 24 KB of nibbles is 49152 samples: 6.1 s at MIC_SAMPLE_RATE_HZ.
@@ -117,10 +96,19 @@ uint16_t mic_capture(bool (*keep)(void))
      * and neither board manages it: the MAX9814 rests at 1.23 V typical under a 0-2.7 V
      * window — and typical is the word, since the part spread is 1.14-1.32 V, so this
      * was never a constant to hardcode — while the ring's MEMS follows VBAT_HIGH under
-     * a window that does not (see board_config.h). The kit's rest measured about -3151 counts off mid-scale, and
-     * ADPCM is differential: a constant offset the encoder does not know about is a step
-     * it has to slew through from predictor 0, which is the click at the start of a clip.
-     * One burst, the same 4 ms mic_read() already spends, and the offset is gone.
+     * a window that does not (see board_config.h). The kit's rest measured about -3151
+     * counts off mid-scale, and ADPCM is differential: a constant offset the encoder
+     * does not know about is a step it has to slew through from predictor 0, which is
+     * the click at the start of a clip. One 4 ms burst and the offset is gone.
+     *
+     * The number is also the signal path's health check, if it is ever read out. A
+     * MAX9814 rests at 1.23 V typical (1.14-1.32 V across parts), about 29800 counts
+     * under the kit's 3x attenuator; ours measured 29835. The ring's MEMS rests near half
+     * of VBAT_HIGH. A bias near ZERO means nothing is arriving at the pin — wiring,
+     * power, the wrong pad, or a module built to the datasheet with an output coupling
+     * capacitor, which strips exactly the offset this ADC needs as its midpoint. A
+     * plausible bias with a flat recording means something is compressing the signal,
+     * which on the kit is the AGC's job description (board_config.h, the A/R pin).
      */
     int32_t bias = 0;
     for (uint8_t i = 0; i < MIC_BURST; i++) {
@@ -139,11 +127,9 @@ uint16_t mic_capture(bool (*keep)(void))
      * speech coarsely. The rumble is not merely audible; it is taking resolution away
      * from the voice underneath it.
      *
-     * Corner = rate / (2*pi * 2^shift): at 8 kHz, shift 4 puts it near 80 Hz — under
-     * the lowest voice fundamental, far above the drift. Starts at zero because the
-     * samples are already bias-corrected, so there is no settling transient of its own.
+     * DC_SHIFT sets the corner (see its definition). Starts at zero because the samples
+     * are already bias-corrected, so there is no settling transient of its own.
      */
-    #define DC_SHIFT 4
     int32_t dc_q8 = 0;
 
     uint16_t n = 0;         /* samples STORED, at MIC_SAMPLE_RATE_HZ */
