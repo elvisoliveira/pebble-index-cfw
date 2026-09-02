@@ -22,18 +22,22 @@
 /*
  * The clip's sample rate, and the rate the converter actually runs at.
  *
- * The ADC free-runs at whatever its conversion time makes it — measured at about
- * 11 kHz — which is not a rate anyone asked for. 8 kHz is the telephone standard, is
- * plenty for voice, and buys 37% more recording out of the same buffer, so the loop
- * averages the extra samples away rather than keeping them.
+ * The ADC free-runs at whatever its conversion time makes it, which is not a rate
+ * anyone asked for. 8 kHz is the telephone standard, is plenty for voice, and buys 37%
+ * more recording out of the same buffer, so the loop averages the extra samples away
+ * rather than keeping them.
  *
  * Averaging, not dropping: discarding samples folds everything above 4 kHz back into
  * the band as aliasing, and a running mean over each output period is a crude low-pass
  * that costs one add. Whoever plays the clip has to use MIC_SAMPLE_RATE_HZ or the pitch
  * comes out wrong.
+ *
+ * MIC_SOURCE_RATE_HZ is a MEASURED per-board number and lives in board_config.h with
+ * the other things a board decides. Getting it wrong does not fail loudly: the clip is
+ * still labelled 8 kHz, so it simply plays at the wrong speed, and a voice 20% slow
+ * reads as "the equalisation is off" long before it reads as "the sample rate is off".
  */
 #define MIC_SAMPLE_RATE_HZ  8000
-#define MIC_SOURCE_RATE_HZ  11000
 
 /* One burst, in raw ADC counts. Raw on purpose: the useful range is not known yet on
  * either board, and scaling or thresholding would bake in a guess before the bench has

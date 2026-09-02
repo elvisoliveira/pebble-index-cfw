@@ -92,6 +92,11 @@
      * outright. What the two boards DO share is that neither has any anti-aliasing:
      * both are flat well past the ~11 kHz the converter free-runs at. */
     #define MIC_ADC_ATTN   ADC_INPUT_ATTN_3X   /* 0-2.7 V */
+    /* Never measured properly on this board — see the ring's entry for the method that
+     * works. The kit's audio sounds right, which only bounds the error to something
+     * under a few percent, and "sounds right" is exactly the standard that let the
+     * ring be 20% off for a week. */
+    #define MIC_SOURCE_RATE_HZ  11000
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */
@@ -185,6 +190,24 @@
      * 150 ms; it reports a level, and a level off a settling bias is still a level.
      */
     #define MIC_WARMUP_MS  150
+    /*
+     * The rate the converter actually free-runs at on THIS board, measured 2026-09-02.
+     * Not 11000: that number came off the kit, and the ring runs about 20% faster.
+     *
+     * Method, since it took three failed attempts to find one that works. Play a train
+     * of 20 ms 400 Hz bursts spaced exactly 1.000 s — from the PHONE's speaker, held
+     * against the ring; a laptop is too far and this laptop exposes no internal speaker
+     * sink at all. Record a full buffer, then read the clip two ways: the envelope's
+     * autocorrelation gives the period in LABELLED seconds, and the burst's apparent
+     * frequency gives 400/k. They agreed to 0.5% — 1.1963 against 1.2019 — which is
+     * what makes the number trustworthy, because one is a time measurement and the
+     * other a frequency measurement of the same recording.
+     *
+     * 11000 * 1.20 = 13200. Cross-checks: the buffer then fills in 5.1 s, matching a
+     * stopwatch that said "under 6 seconds, certainly"; and a blind listening test over
+     * six pitch-shifted versions picked 1.15, the nearest option offered to 1.20.
+     */
+    #define MIC_SOURCE_RATE_HZ  13200
 #endif
 
 /* The ADC input is the ONE thing the microphone does not differ on: P0_7 is single-ended
