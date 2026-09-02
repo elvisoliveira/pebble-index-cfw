@@ -101,6 +101,15 @@ uint16_t mic_capture(bool (*keep)(void))
     adpcm_reset(&st);
     mic_on();
 
+#ifdef MIC_WARMUP_MS
+    /* Let the microphone finish powering up before anything is measured off it — see
+     * board_config.h for where the number comes from. Blocking is free here: the caller
+     * is about to block for seconds anyway, and the recording light is already on, so
+     * the wait reads as "starting". The ceiling is the watchdog, ~2 s, and 150 ms
+     * leaves that untouched; feed it from here if this ever grows. */
+    arch_asm_delay_us(MIC_WARMUP_MS * 1000);
+#endif
+
     /*
      * Where the signal actually rests, measured, instead of assuming mid-scale.
      *

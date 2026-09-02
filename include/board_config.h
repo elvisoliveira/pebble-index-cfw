@@ -158,6 +158,23 @@
     #define MIC_HAS_PWR_PIN
     #define MIC_PWR_PIN    GPIO_PIN_3
     #define MIC_PWR_SETTLE_US 50
+    /*
+     * And then some. The 50 us above is what the stock app waits between raising P0_3
+     * and moving on — but it does not sample there. It erases a 4 KB flash sector next
+     * and busy-waits on a millisecond clock until 150 ms have passed since power-up,
+     * and only THEN loads the ADC config and starts converting (FUN_07fc5bd8).
+     *
+     * Read the intent honestly: those 150 ms are nominally waiting for the erase, not
+     * for the microphone. What is not in doubt is the empirical fact of the working
+     * system — it never samples a MEMS that has been powered for less than ~150 ms.
+     * We sampled at 50 us, and worse, measured the DC bias there: a bias read while it
+     * is still rising is then subtracted from the whole clip, and the encoder spends
+     * six seconds chasing an offset that was never real.
+     *
+     * Capture only. mic_read() runs in the button ISR on every click and cannot carry
+     * 150 ms; it reports a level, and a level off a settling bias is still a level.
+     */
+    #define MIC_WARMUP_MS  150
 #endif
 
 /* The ADC input is the ONE thing the microphone does not differ on: P0_7 is single-ended
