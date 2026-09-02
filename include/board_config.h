@@ -142,19 +142,29 @@
      * The stock app drives P0_3 high, waits 50 us and converts — both numbers read out
      * of app v3.74 (its adc_config template at 0x07fc6b34), and both kept here.
      *
-     * The attenuator is the one number NOT copied from the ring, and the reason is the
-     * rail. A pad's HIGH is VBAT_HIGH, so P0_3 hands the microphone whatever the DC-DC
-     * is holding; the stock app refcounts that rail and drops it to 1.8 V for the mic,
-     * which is what makes its 0-1.8 V window exactly right. This CFW does not refcount
-     * — periph_init brings the DC-DC up once and leaves it, at 3.0 V in boost (see
-     * led.c, where the LED is why). A 3.0 V rail puts the MEMS at rest near 1.5 V, or
-     * 83% of a 1.8 V scale, with 0.3 V of headroom left above it: the positive half of
-     * every waveform clipped at the rail.
+     * 2x, byte-identical to the stock config now — and getting here took a wrong turn
+     * worth writing down.
      *
-     * 0-3.6 V costs one bit of resolution and buys independence from the rail: the
-     * mic rests mid-window whether VBAT_HIGH is 1.8 V or 3.0 V, so this stays right if
-     * the refcount is ever ported. Cheaper than porting it to fix a recording. */
-    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_4X   /* 0-3.6 V — see above, NOT the ring's 2x */
+     * A pad's HIGH is VBAT_HIGH, so P0_3 hands the microphone whatever the DC-DC holds.
+     * The stock app refcounts that rail down to 1.8 V for the mic, which is what makes
+     * its 0-1.8 V window fit. This CFW does not refcount: periph_init brings the DC-DC
+     * up once and leaves it at 3.0 V, because that is what the LED needs (led.c). So
+     * the MEMS rests near 1.5 V, at 83% of a 1.8 V scale, and 4x (0-3.6 V) was chosen
+     * to keep it off the ceiling.
+     *
+     * That reasoning never asked HOW FAR the signal actually moves. A bare analog MEMS
+     * has no preamplifier — speech is on the order of 10 mV peak-to-peak — so the
+     * 0.3 V of headroom above a 1.5 V rest point is roughly thirty times what it can
+     * ever use. There was no clipping to avoid, and 4x was paying a factor of two in
+     * amplitude for it. On the ring that reads as a voice recorded from across the
+     * room. The stock app pairing an 1.8 V rail with an 1.8 V window is itself the
+     * evidence that the rest point sits near mid-rail; a part biased near its ceiling
+     * would clip in the factory's own design too.
+     *
+     * The bias is measured per capture (mic.c), so sitting high in the window costs
+     * nothing but headroom we do not need. If a future part rests above 1.8 V this
+     * saturates and the recording goes silent — loud, and one constant to walk back. */
+    #define MIC_ADC_ATTN   ADC_INPUT_ATTN_2X   /* 0-1.8 V — the ring's own choice */
     #define MIC_HAS_PWR_PIN
     #define MIC_PWR_PIN    GPIO_PIN_3
     #define MIC_PWR_SETTLE_US 50
