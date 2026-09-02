@@ -92,11 +92,18 @@
      * outright. What the two boards DO share is that neither has any anti-aliasing:
      * both are flat well past the ~11 kHz the converter free-runs at. */
     #define MIC_ADC_ATTN   ADC_INPUT_ATTN_3X   /* 0-2.7 V */
-    /* Never measured properly on this board — see the ring's entry for the method that
-     * works. The kit's audio sounds right, which only bounds the error to something
-     * under a few percent, and "sounds right" is exactly the standard that let the
-     * ring be 20% off for a week. */
-    #define MIC_SOURCE_RATE_HZ  11000
+    /* Same 14160 as the ring, and for a reason rather than a copy: the fixed point is
+     * set by the capture loop's own timing (see the ring's entry), and both boards run
+     * the same loop. The only ADC difference is the attenuator, a passive divider at
+     * the input — it does not touch smpl_time_mult or the SAR clock, so a conversion
+     * costs the same on both.
+     *
+     * The 11000 that was here came from an early rough measurement and was wrong by
+     * about 29%, which means the kit has been recording at the wrong pitch the whole
+     * time. That is almost certainly the "there is an equalisation problem we can
+     * ignore for now" from the day the kit's audio first worked — a voice 29% slow.
+     * Verify with the same click train the ring was measured with. */
+    #define MIC_SOURCE_RATE_HZ  14160
 #else
     #define BTN_PIN        GPIO_PIN_1
     #define FLASH_EN_PIN   GPIO_PIN_9   /* SPI CS  — FUNC_SPI_CSN0, cs_pad.pin */
@@ -203,11 +210,30 @@
      * what makes the number trustworthy, because one is a time measurement and the
      * other a frequency measurement of the same recording.
      *
-     * 11000 * 1.20 = 13200. Cross-checks: the buffer then fills in 5.1 s, matching a
-     * stopwatch that said "under 6 seconds, certainly"; and a blind listening test over
-     * six pitch-shifted versions picked 1.15, the nearest option offered to 1.20.
+     * ⚠ AND THE NUMBER MOVES WHEN YOU CHANGE IT. Two good measurements disagreed by
+     * 5% — 13190 then 13901 — because this is not a property of the ADC. The capture
+     * loop converts every iteration but only encodes when it EMITS, and how often it
+     * emits is set by this very constant. Raise it, the loop emits less often, does
+     * less work per iteration, and genuinely runs faster. The constant chases a target
+     * it moves.
+     *
+     * Two points solve it. With Fs = 1/(Ta + Te/R) and R = MIC_SOURCE/8000:
+     *   (R=1.3750, Fs=13190) and (R=1.6500, Fs=13901)
+     *   -> Ta = 52.6 us   one 64x-oversampled conversion, ~0.8 us per raw sample
+     *      Te = 32.0 us   512 cycles at 16 MHz: the integer divide (no hardware
+     *                     divider on an M0+), the DC filter, the ADPCM ladder, the store
+     * The output rate is 1/(R*Ta + Te), and wanting it at 8000 Hz gives R = 1.7699,
+     * so 14160. Both fitted numbers are physically sensible, which is the reason to
+     * trust the extrapolation rather than iterate towards it.
+     *
+     * This makes a checkable prediction: measure again at 14160 and the click train
+     * should come back at k = 1.000. It also makes the constant fragile in a specific
+     * way — ANY change to the work done per emitted sample moves it. Drop the divide,
+     * change the codec, add a filter, and this must be measured again. The real cure is
+     * the stock app's clocked DMA chain, where the rate is set by a UART divisor and
+     * owes nothing to what the CPU is doing.
      */
-    #define MIC_SOURCE_RATE_HZ  13200
+    #define MIC_SOURCE_RATE_HZ  14160
 #endif
 
 /* The ADC input is the ONE thing the microphone does not differ on: P0_7 is single-ended

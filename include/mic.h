@@ -23,7 +23,7 @@
  * The clip's sample rate, and the rate the converter actually runs at.
  *
  * The ADC free-runs at whatever its conversion time makes it, which is not a rate
- * anyone asked for. 8 kHz is the telephone standard, is plenty for voice, and buys 37%
+ * anyone asked for. 8 kHz is the telephone standard, is plenty for voice, and buys 77%
  * more recording out of the same buffer, so the loop averages the extra samples away
  * rather than keeping them.
  *
