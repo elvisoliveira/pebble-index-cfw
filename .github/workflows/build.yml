@@ -8,19 +8,38 @@ name: build
 #     GCC_TOOLCHAIN_PATH   e.g. /usr            (dir whose bin/ has arm-none-eabi-gcc)
 #     DIALOG_SDK_PATH      e.g. /home/<user>/tools/DA145xx_SDK/6.0.22.1401
 
+# Releasing is a three-step ladder, and each rung means something different. The
+# workflow only ever occupies the middle one.
+#
+#   1. DRAFT       write the notes, take as long as you like. Drafts fire no event at
+#                  all — not created, not edited — so nothing builds and nobody sees it.
+#   2. PRE-RELEASE publish the draft as a pre-release. THAT fires `published`, this
+#                  workflow builds the firmware and attaches the binaries. The release
+#                  is visible but /releases/latest still ignores it, so the flasher app
+#                  keeps bundling the previous stable one.
+#   3. RELEASE     tick "set as the latest release" once the assets look right. That
+#                  fires `released`, not `published`, so it does NOT build again — and
+#                  from that moment the flasher's bundleFirmware picks the new image up.
+#
+# The notes are written by a person before any of this. `gh release create
+# --generate-notes` used to produce a list of commit subjects, which in a repository
+# whose commit messages are essays is both redundant and unreadable.
+#
+# Triggering on the release rather than on a tag push is what makes "does the release
+# exist?" a question nobody has to ask: it exists because it is what started the run.
+
 on:
-  push:
-    tags: ['v*']            # a version tag (e.g. v0.1.0) builds and cuts a Release
-  workflow_dispatch:         # manual re-run only (does not fire on its own)
-  # Tags only: an ordinary push to master does not build, so the self-hosted runner
-  # is only needed when cutting a release. No `branches` and no `pull_request` on
-  # purpose — a PR from a fork must never run code on the runner machine.
+  release:
+    types: [published]       # a draft published as a pre-release; see the ladder above
+  workflow_dispatch:         # plain build, artifacts only, attaches to nothing
+  # No `branches` and no `pull_request` on purpose — a PR from a fork must never run
+  # code on the runner machine.
 
 jobs:
   build:
     runs-on: [self-hosted, linux]
     permissions:
-      contents: write       # needed to create the Release and upload assets on tag builds
+      contents: write       # to attach assets to an existing release; nothing is created
     env:
       GCC_TOOLCHAIN_PATH: ${{ vars.GCC_TOOLCHAIN_PATH }}
       DIALOG_SDK_PATH: ${{ vars.DIALOG_SDK_PATH }}
@@ -56,16 +75,21 @@ jobs:
             build/DA14531_App.elf
             build/DA14531_App.map
 
-      # On a version tag, publish the just-built firmware as a GitHub Release.
-      # create is idempotent (|| true if the release already exists on a re-run);
-      # upload --clobber overwrites the assets so re-running a tag build is safe.
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Attach the binaries to the release that started this run. It exists by
+      # definition, so there is nothing to create and nothing to check. --clobber so
+      # that re-running the run — which keeps the same event payload — replaces the
+      # assets rather than failing on them.
+      #
+      # If this step fails, the release is left with its notes and no binaries. That is
+      # the cost of writing the notes first, and it is why step 2 of the ladder is a
+      # PRE-release: nothing downstream consumes it yet. Re-run the run to fix it.
+      - name: Attach binaries to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes || true
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$TAG" \
             build/DA14531_App.bin \
             build/DA14531_App.hex \
             build/DA14531_App.elf \
