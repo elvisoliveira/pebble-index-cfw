@@ -128,6 +128,24 @@ uint16_t mic_capture(bool (*keep)(void))
     }
     bias /= MIC_BURST;
 
+    /*
+     * Running DC, Q8, one pole. The bias burst above is a snapshot and the bias MOVES:
+     * a real ring, holding still, put 98.6% of a silent clip's energy below 50 Hz, and
+     * 69% of a clip of clear speech — drift, not sound, since voice has no fundamental
+     * down there. Subtracting a constant cannot follow that.
+     *
+     * It costs more than it looks. ADPCM sizes its step from the whole signal, so a
+     * predictor busy tracking drift spends its range on the drift and quantises the
+     * speech coarsely. The rumble is not merely audible; it is taking resolution away
+     * from the voice underneath it.
+     *
+     * Corner = rate / (2*pi * 2^shift): at 8 kHz, shift 4 puts it near 80 Hz — under
+     * the lowest voice fundamental, far above the drift. Starts at zero because the
+     * samples are already bias-corrected, so there is no settling transient of its own.
+     */
+    #define DC_SHIFT 4
+    int32_t dc_q8 = 0;
+
     uint16_t n = 0;         /* samples STORED, at MIC_SAMPLE_RATE_HZ */
     int32_t sum = 0;        /* the running mean that stands in for a low-pass filter */
     uint16_t count = 0;
@@ -155,7 +173,9 @@ uint16_t mic_capture(bool (*keep)(void))
         }
         phase -= MIC_SOURCE_RATE_HZ;
 
-        uint8_t nibble = adpcm_encode(&st, (int16_t)(sum / (int32_t)count));
+        int32_t avg = sum / (int32_t)count;
+        dc_q8 += ((avg << 8) - dc_q8) >> DC_SHIFT;
+        uint8_t nibble = adpcm_encode(&st, (int16_t)(avg - (dc_q8 >> 8)));
         sum = 0;
         count = 0;
 
