@@ -80,19 +80,28 @@ should not be able to do that. Still, that is why this README says
 
 ## Security
 
-There is none, and for now that is deliberate. The CFW does not pair or bond (BLE
-security is compiled out), and its GATT Control Point accepts writes from any central
-in range. Two things follow:
+No BLE pairing or bonding (it is compiled out). Instead the ring and the app share one
+key, agreed on first use and gated by the button:
 
-- Anyone in range can pull the last recording off the ring over BLE, the same way the
-  companion app does. Treat a clip as public until it has been fetched and released.
-- Anyone in range can send the failsafe command and drop the ring into recovery mode.
-  That is recoverable (the official Pebble app reinstalls the stock firmware), but it
-  is a remote reset with no confirmation.
+- **Clicks are public.** The counter was always in the advertisement, and the five-click
+  failsafe gesture needs a finger on the ring.
+- **The clip is encrypted.** Anyone in range can download it, but it leaves the ring
+  under ChaCha20 with the shared key and a fresh nonce per transfer. Without the key it
+  is noise.
+- **The failsafe command is tagged.** A write that would reset the ring must carry a
+  tag only the key can produce. Without it the ring ignores the command.
+- **The key is handed out once, on a click.** The app asks for it on the connection a
+  click's advertising burst brought in; a link from any other moment gets nothing. The
+  advertisement carries a 16-bit key id (0 = no key) so the app can tell, before
+  connecting, whether the ring still has the key it stored — and it stores one per
+  ring, by address.
+- **The key lives in RAM.** Any reboot (five clicks, the POR gesture, a crash, a
+  reflash) forgets it, the key id drops to 0, and the app pairs again on the next click.
 
-Both were acceptable for a click counter; they are worth knowing about now that the
-ring records audio. Bonding or a simple unlock token would close them; neither is
-implemented yet.
+What this does not do: the one notification that carries the key travels in the clear,
+so whoever is listening at that moment owns it. The button gate limits that to a
+3-second window the owner chose. The link itself is not encrypted, and the clip carries
+no integrity check; neither buys anything here that the key does not already.
 
 ## Test kit
 

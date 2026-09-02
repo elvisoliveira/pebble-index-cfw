@@ -38,6 +38,7 @@
 #include <led.h>
 #include <mic.h>
 #include <clip_tx.h>
+#include <secret.h>
 #include <user_periph_setup.h>   /* por_arm / por_disarm */
 #include <app_easy_gap.h>
 #include <app.h>            /* app_env[].connection_active */
@@ -90,7 +91,7 @@ static void button_rearm(void)
  * the name on the first click (still findable by address, gone from name-based
  * scans). So we emit both AD structures together every time.
  */
-#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + reserved(2) + clip samples(2) */
+#define ADV_MFR_LEN  9   /* len + type + company(2) + counter + key id(2) + clip samples(2) */
 #define ADV_NAME_LEN (2 + USER_DEVICE_NAME_LEN)
 
 /* Minus 3: the stack reserves the Flags AD for itself, so the host buffer this payload
@@ -99,10 +100,12 @@ static void button_rearm(void)
 _Static_assert(ADV_MFR_LEN + ADV_NAME_LEN <= ADV_DATA_LEN - 3,
                "advertisement too long for the host buffer (ADV_DATA_LEN minus Flags)");
 
-/* Bytes 5-6 of the AD structure once carried the microphone's peak-to-peak from a 4 ms
- * ADC burst taken in the button ISR. That burst is gone (see handle_click: the SDK
- * polls the same ADC from task context), but the bytes stay, zeroed, so the clip count
- * keeps its offset for a phone that already parses it. Free for the next field. */
+/* Bytes 5-6 of the AD structure carry the key id (secret.h): 0 says the ring has no key
+ * and must be paired on the next click, anything else says which key the clip will come
+ * under, so the phone knows before connecting whether its stored key still fits. They
+ * once carried the microphone's peak-to-peak from a 4 ms ADC burst taken in the button
+ * ISR; that burst is gone (see handle_click: the SDK polls the same ADC from task
+ * context), and the clip count kept its offset. */
 
 /* Samples in the clip the ring is HOLDING — not in the last one recorded. It reads back
  * from mic rather than being remembered here, so that a delivered clip stops being
@@ -121,8 +124,9 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
     adv[2] = 0xFF;              /* company id 0xFFFF (dev/unassigned), LSB */
     adv[3] = 0xFF;              /*                                    MSB */
     adv[4] = counter;           /* the click counter the phone watches */
-    adv[5] = 0;                 /* reserved (was microphone peak-to-peak), LSB */
-    adv[6] = 0;                 /*                                        MSB */
+    uint16_t key_id = secret_id();
+    adv[5] = (uint8_t)key_id;          /* key id, LSB — 0: no key, pair me */
+    adv[6] = (uint8_t)(key_id >> 8);   /*         MSB */
     adv[7] = (uint8_t)clip_samples;        /* samples in the last clip, LSB */
     adv[8] = (uint8_t)(clip_samples >> 8); /*                           MSB */
     adv[9] = USER_DEVICE_NAME_LEN + 1;
@@ -223,7 +227,16 @@ static bool hold_served;
 void user_on_disconnect(struct gapc_disconnect_ind const *param)
 {
     clip_tx_abort();    /* ends the transfer AND forgets the peer's CCCDs */
+    secret_on_disconnect();
     default_app_on_disconnect(param);
+}
+
+/* Every link passes the key gate on the way in: whether it may be issued a key is
+ * decided here, from whether a click armed it, and nowhere later. */
+void user_on_connection(uint8_t conidx, struct gapc_connection_req_ind const *param)
+{
+    secret_on_connect();
+    default_app_on_connection(conidx, param);
 }
 
 void user_advertise_operation(void)
@@ -743,6 +756,7 @@ static void handle_click(void)
     if (!clip_tx_busy()) {
         blink(LED_CLICK);               /* its own cancel is a no-op: led_cancel led */
     }
+    secret_arm();                       /* the connection this burst brings in may pair */
     refresh_clip_count();               /* a delivered clip must stop being advertised */
     advertise_click(click_count);       /* refresh active burst or start a new one */
     button_rearm();

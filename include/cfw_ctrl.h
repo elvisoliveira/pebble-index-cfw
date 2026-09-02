@@ -4,24 +4,32 @@
 #include <stdint.h>
 
 /*
- * GATT Control Point command dispatch. Payload:
- *   [0x00]                        -> enter_failsafe(). Button-independent recovery, the
- *                                    same outcome as five fast clicks but reachable with
- *                                    a dead button.
- *   [0x01, chunk_lo, chunk_hi]    -> send the recorded clip. The chunk size comes from
- *                                    the app because only it knows the MTU it negotiated.
- *   [0x03]                        -> fill the clip with a counting ramp. A test payload:
- *                                    corruption, a lost chunk or one out of order is
- *                                    obvious in a ramp and invisible in audio, so the
- *                                    transfer can be proven before real audio exists.
- * Wired from ble_handlers.c (CUSTS1_VAL_WRITE_IND).
+ * GATT Control Point command dispatch. Two kinds of write:
  *
- * NO AUTHENTICATION. BLE security is compiled out (da1458x_config_basic.h) and the
- * advertiser accepts any central, so every opcode here is available to anyone in radio
- * range: 0x00 is a remote reset into recovery, 0x01 hands out the last recording. Both
- * were fine for a click counter and are a known, documented gap now that the ring holds
- * audio (README, "Security"). Bonding or an unlock token would close it; neither is
- * built, and anything added here inherits the gap until one is.
+ *   plain
+ *   [0x01, chunk_lo, chunk_hi]     send the recorded clip (clip_tx.c). Anyone may ask;
+ *                                  the clip goes out encrypted under the ring's key,
+ *                                  so asking buys ciphertext. The chunk size comes
+ *                                  from the app because only it knows the MTU it
+ *                                  negotiated. Refused while the ring has no key.
+ *   [0x10]                         pair: issue the key. Answered on the Control Point
+ *                                  with [0x10, key(32)] — once, to the connection a
+ *                                  click's burst brought in (secret.h). Silently
+ *                                  ignored otherwise, and when the Control Point is
+ *                                  not subscribed, since the answer could not be heard.
+ *
+ *   tagged: [op, nonce(12), tag(16)], tag = ChaCha20(key, nonce, counter = op)[0..16]
+ *   [0x00, ...]                    enter_failsafe(). Button-independent recovery, the
+ *                                  same outcome as five fast clicks but reachable with
+ *                                  a dead button — and, being a remote reset, the one
+ *                                  command that must not be anyone's.
+ *   [0x03, ...]                    fill the clip with a counting ramp. A test payload:
+ *                                  corruption, a lost chunk or one out of order is
+ *                                  obvious in a ramp and invisible in audio. Tagged
+ *                                  because it overwrites a recording.
+ *
+ * Wired from ble_handlers.c (CUSTS1_VAL_WRITE_IND). The key model — what the tag
+ * proves, what it does not, and why the key is handed out the way it is — is secret.h.
  */
 void cfw_ctrl_write(uint8_t conidx, const uint8_t *data, uint16_t len);
 

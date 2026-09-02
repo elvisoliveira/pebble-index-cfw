@@ -22,6 +22,8 @@ add_executable(${PROJECT_NAME}
     src/clip_tx.c
     src/adpcm.c
     src/mic.c
+    src/chacha.c
+    src/secret.c
 )
 
 set(GLOBAL_DEBUG_OPTIONS -mthumb -mcpu=cortex-m0plus -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -flto -Wall -Werror -g3)

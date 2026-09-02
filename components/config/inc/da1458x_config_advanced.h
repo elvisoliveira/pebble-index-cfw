@@ -23,8 +23,11 @@
 /* No ECDH/secure-connection keys (faster start-up, smaller code). */
 #undef CFG_ENABLE_SMP_SECURE
 
-/* Stdlib RNG, not ChaCha20. */
-#undef CFG_USE_CHACHA20_RAND
+/* ChaCha20 CSPRNG (in ROM), not the stdlib rand(). Load-bearing for secret.c: with
+ * this defined trng.c seeds the generator with the SRAM PUF's full 128 bits; without
+ * it the same bits collapse into a 32-bit srand(), and a key drawn from that falls to
+ * brute force in seconds from one captured command tag. */
+#define CFG_USE_CHACHA20_RAND
 
 /* Custom heap sizes. */
 #define DB_HEAP_SZ              2048

@@ -3,6 +3,7 @@
 #include <mic.h>
 #include <led.h>
 #include <user_app.h>       /* user_beacon_restage — the beacon must follow the state */
+#include <secret.h>
 #include <user_custs1_def.h>
 #include <custs1_task.h>
 #include <gattc.h>          /* gattc_get_mtu */
@@ -21,6 +22,7 @@ static uint16_t total;      /* bytes to send */
 static uint16_t sent;
 static uint16_t chunk_len;
 static uint8_t  conn;
+static uint8_t  nonce[CHACHA_NONCE_LEN];    /* this transfer's, fresh per start */
 static bool     active;
 static bool     sub_audio;      /* the Audio CCCD, as the peer last wrote it */
 static bool     sub_ctrl;       /* the Control Point CCCD — start and DONE travel on it,
@@ -34,12 +36,12 @@ static void stop_transfer(void)
     led_off();
 }
 
-static void notify(uint16_t handle, const uint8_t *data, uint16_t len)
+static void notify(uint8_t conidx, uint16_t handle, const uint8_t *data, uint16_t len)
 {
     struct custs1_val_ntf_ind_req *req = KE_MSG_ALLOC_DYN(CUSTS1_VAL_NTF_REQ,
         prf_get_task_from_id(TASK_ID_CUSTS1), TASK_APP, custs1_val_ntf_ind_req, len);
 
-    req->conidx       = conn;
+    req->conidx       = conidx;
     req->notification = true;
     req->handle       = handle;
     req->length       = len;
@@ -65,13 +67,20 @@ static void send_next(void)
          * physical click. Re-stage from current state instead, here, where the state
          * changed. */
         user_beacon_restage();
-        notify(SVC1_IDX_CONTROL_POINT_VAL, &done, 1);
+        notify(conn, SVC1_IDX_CONTROL_POINT_VAL, &done, 1);
         return;
     }
     if (left > chunk_len) {
         left = chunk_len;
     }
-    notify(SVC1_IDX_AUDIO_VAL, &clip[sent], left);
+    /* Encrypt on the way out, chunk by chunk, keyed by the chunk's own byte offset so
+     * no state carries between chunks. The key cannot be gone mid-transfer: only a
+     * reboot forgets it, and a re-key needs a connection from a click, which this link
+     * is not (it is busy, and clip_tx_start refused without a key). */
+    uint8_t buf[CHUNK_MAX];
+    memcpy(buf, &clip[sent], left);
+    chacha20_xor(secret_key(), nonce, sent, buf, left);
+    notify(conn, SVC1_IDX_AUDIO_VAL, buf, left);
     sent += left;
 }
 
@@ -94,6 +103,12 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk)
      * never learns the count or the end.
      */
     if (!(sub_audio && sub_ctrl)) {
+        return;
+    }
+    /* Nothing to send UNDER: with no key the clip could only go out in the clear, and
+     * nobody could read it anyway. The beacon's key id 0 already told the phone to pair
+     * first, which it can do on this very connection if a click brought it in. */
+    if (secret_key() == NULL) {
         return;
     }
     /* No recording can be running here TODAY: mic_capture blocks the task context this
@@ -127,8 +142,13 @@ void clip_tx_start(uint8_t conidx, uint16_t chunk)
 
     led_hold(LED_TRANSFER);     /* lit for the whole send, dark when it ends either way */
 
-    const uint8_t hdr[3] = { CMD_SEND, (uint8_t)samples, (uint8_t)(samples >> 8) };
-    notify(SVC1_IDX_CONTROL_POINT_VAL, hdr, sizeof hdr);
+    secret_nonce(nonce);
+    uint16_t id = secret_id();
+    uint8_t hdr[5 + CHACHA_NONCE_LEN] = {
+        CMD_SEND, (uint8_t)samples, (uint8_t)(samples >> 8), (uint8_t)id, (uint8_t)(id >> 8),
+    };
+    memcpy(&hdr[5], nonce, CHACHA_NONCE_LEN);
+    notify(conn, SVC1_IDX_CONTROL_POINT_VAL, hdr, sizeof hdr);
     /* The first chunk waits for THIS notification's confirmation, so the header and the
      * data cannot race each other out of order. */
 }
@@ -176,4 +196,14 @@ void clip_tx_abort(void)
 bool clip_tx_busy(void)
 {
     return active;
+}
+
+bool clip_tx_ctrl_subscribed(void)
+{
+    return sub_ctrl;
+}
+
+void clip_tx_ctrl_notify(uint8_t conidx, const uint8_t *data, uint16_t len)
+{
+    notify(conidx, SVC1_IDX_CONTROL_POINT_VAL, data, len);
 }

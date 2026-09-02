@@ -14,7 +14,7 @@
 
 /* Unlisted members are NULL (no handler). */
 static const struct app_callbacks user_app_callbacks = {
-    .app_on_connection                  = default_app_on_connection,
+    .app_on_connection                  = user_on_connection,   /* the key gate sees every link */
     .app_on_disconnect                  = user_on_disconnect,   /* releases a transfer cut short */
     .app_on_set_dev_config_complete     = default_app_on_set_dev_config_complete,
     .app_on_adv_undirect_complete       = user_on_adv_undirect_complete,

@@ -17,6 +17,7 @@ void enter_failsafe(void);
  * .default_operation_adv: it is the one point that sees every advertising start we do
  * not make ourselves, so it is where the "a burst is running" flag belongs. */
 void user_advertise_operation(void);
+void user_on_connection(uint8_t conidx, struct gapc_connection_req_ind const *param);
 void user_on_disconnect(struct gapc_disconnect_ind const *param);
 void user_on_adv_undirect_complete(uint8_t status);
 
