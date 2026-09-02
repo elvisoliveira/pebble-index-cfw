@@ -28,11 +28,6 @@ static void set_pad_functions(void)
     por_arm();
 }
 
-/* por_time is in units of 4096 RC32K periods, about 128 ms, in a 7-bit field: ~16 s is
- * the hardware ceiling. 40 puts the reset at ~5 s, which has to sit comfortably above
- * the hold that starts a recording (~1 s) so healthy firmware always disarms first. */
-#define POR_HOLD_TICKS 40
-
 void por_arm(void)
 {
     GPIO_EnablePorPin(BTN_PORT, BTN_PIN, GPIO_POR_PIN_POLARITY_LOW, POR_HOLD_TICKS);

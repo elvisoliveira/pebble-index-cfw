@@ -19,6 +19,13 @@
  * What it does NOT cover: a stall with interrupts disabled and the watchdog already
  * frozen, and anything that dies before the watchdog is running at all.
  *
+ * AND IT IS ON A CLOCK. The watchdog generates this NMI at zero and resets the chip
+ * sixteen ticks later — about 163 ms at WATCHDOG_DEFAULT_PERIOD's 10.24 ms tick. Nothing
+ * here may reload it, so everything below has to fit in that. enter_failsafe() does a
+ * 3-byte read and a 1-byte program, a few ms, and clears it thirty times over. A flash
+ * ERASE would not: a sector erase is 50-300 ms, so it would be cut in half by the reset
+ * and leave the sector partly erased. Nothing on this path erases today. Nothing may.
+ *
  * NMI_Handler is .weak in startup_DA14531.S, so this definition replaces the SDK's.
  * (This file previously held ~19 IRQ_* stubs that each did __BKPT(0) and spun. They
  * were dead code: the vector table uses the unprefixed names, and the linker dropped

@@ -33,6 +33,7 @@
 #include <clip_tx.h>
 #include <user_periph_setup.h>   /* por_arm / por_disarm */
 #include <app_easy_gap.h>
+#include <app.h>            /* app_env[].connection_active */
 #include <app_easy_timer.h>
 #include <app_default_handlers.h>   /* default_advertise_operation, default_app_on_init */
 #include <gapm_task.h>              /* struct gapm_start_advertise_cmd */
@@ -130,8 +131,8 @@ static uint8_t build_adv(uint8_t *adv, uint8_t counter)
  * Set at the two places bursts start; cleared in ONE place,
  * user_on_adv_undirect_complete, once the controller has actually stopped — the far
  * edge, identical for our bursts and the SDK's own (boot, post-disconnect), so the two
- * kinds cannot drift apart. Setting it in config-complete was wrong (with
- * WITH_CTRL_POINT the SDK advertises from db_init_complete, not there); the
+ * kinds cannot drift apart. Setting it in config-complete was wrong (with the custom
+ * profile present the SDK advertises from db_init_complete, not there); the
  * user_advertise_operation funnel sees every start regardless of which path makes it.
  *
  * Two windows are accepted rather than closed, both self-healing:
@@ -199,7 +200,17 @@ void user_advertise_operation(void)
 
 static void advertise_click(uint8_t counter)
 {
-    if (advertising) {
+    /* While a link is up the ring is not advertising, and neither branch below is safe:
+     * refreshing pushes data at a stopped advertiser and the count goes nowhere, while
+     * starting asks for a second connectable advertiser with CFG_MAX_CONNECTIONS at 1.
+     * Which one would run depends on whether the stack raises an advertising completion
+     * on connect, which is not established — so the payload is staged in the command
+     * instead and neither is reached. default_app_on_disconnect starts its burst from
+     * that same command, so the counter is current the moment the ring is audible again.
+     * Reachable in ordinary use: the phone holds the link for seconds to fetch a clip. */
+    bool connected = app_env[0].connection_active;
+
+    if (advertising && !connected) {
         uint8_t adv[ADV_MFR_LEN + ADV_NAME_LEN];
         app_easy_gap_update_adv_data(adv, build_adv(adv, counter), NULL, 0);
         return;
@@ -208,6 +219,9 @@ static void advertise_click(uint8_t counter)
     /* Set the active command before starting, so the first packet is complete. */
     struct gapm_start_advertise_cmd *cmd = app_easy_gap_undirected_advertise_get_active();
     cmd->info.host.adv_data_len = build_adv(cmd->info.host.adv_data, counter);
+    if (connected) {
+        return;
+    }
     advertising = true;
     app_easy_gap_undirected_advertise_with_timeout_start(BURST_TU, NULL);
 }
@@ -475,6 +489,13 @@ static void click_reset(void)
  * always disarms first.
  */
 #define HOLD_TICKS 50                   /* 500 ms, in 10 ms timer units */
+
+/* The relation the whole gesture rests on: healthy firmware must see the hold and
+ * disarm long before the silicon reset lands. Twice over is the margin, and it is the
+ * assert rather than the comment that keeps it true when someone lengthens the hold to
+ * fight accidental taps. */
+_Static_assert(HOLD_TICKS * 10 * 2 <= POR_HOLD_MS,
+               "HOLD_TICKS too close to the POR: a hold would reset instead of record");
 
 static timer_hnd hold_timer = EASY_TIMER_INVALID_TIMER;
 

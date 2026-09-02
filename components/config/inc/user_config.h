@@ -50,8 +50,12 @@ static const struct gapm_configuration user_gapm_conf = {
 
     /// Maximal MTU. 23 for Legacy Pairing, 65 for Secure Connection, more if required.
     /// 247 because the clip transfer lives or dies by it: at the 23-byte default a
-    /// notification carries 20 bytes and a 16 KB clip needs 820 of them; at 247 it
-    /// carries 244 and needs 68. Same radio, twelve times the throughput.
+    /// notification carries 20 bytes and a 24 KB clip needs 1229 of them; at 247 it
+    /// carries 244 and needs 101. The win is in ROUND TRIPS, not in radio time — data
+    /// length extension is off (da1458x_config_advanced.h), so a 244-byte notification
+    /// still goes out as ~10 link-layer packets of 27. But clip_tx sends one chunk per
+    /// send confirmation, and each confirmation costs a connection event, so twelve
+    /// times fewer notifications is twelve times fewer waits.
     .max_mtu = 247,
 
     .addr_type = APP_CFG_ADDR_TYPE(USER_CFG_ADDRESS_MODE),
@@ -77,6 +81,13 @@ static const struct gapm_configuration user_gapm_conf = {
     .max_txtime = 0,
 };
 
+/*
+ * Inert, like the two structs at the bottom of this file: nothing calls
+ * app_easy_gap_param_update_start, and default_app_on_connection does not request an
+ * update — it only stops the advertising timeout and enables the profiles. So the
+ * connection interval is whatever the central picks, which is what decides how long a
+ * clip takes to arrive. Wire this up if that ever needs to be ours to decide.
+ */
 static const struct connection_param_configuration user_connection_param_conf = {
     /// Connection interval min/max in ble double slots (1.25ms each)
     .intv_min = MS_TO_DOUBLESLOTS(100),

@@ -3,14 +3,12 @@
 #ifndef _DA1458X_CONFIG_BASIC_H_
 #define _DA1458X_CONFIG_BASIC_H_
 
-/* WITH_CTRL_POINT — the GATT Control Point recovery (write 0x00 -> enter_failsafe), a
- * button-independent path back to the failsafe. ON by default on BOTH builds so the kit
- * validates the recovery path (it is SoC-independent software). Handler in cfw_ctrl.c; the
- * CUSTS1 profile is gated on this in user_profiles_config.h / user_modules_config.h — which
- * this header includes just below, so the define MUST stay above those includes. Comment
- * out for a lean beacon-only build (drops the whole custom profile); 5 fast clicks still
- * recover. */
-#define WITH_CTRL_POINT
+/* The CUSTS1 custom server is not optional. It carries the Control Point (write 0x00 ->
+ * enter_failsafe, the button-independent way back) AND the audio characteristic the clip
+ * transfer notifies on, so the app depends on it in both directions. It used to sit
+ * behind a WITH_CTRL_POINT flag offering a "lean beacon-only build"; that build stopped
+ * linking once the recording landed, so the flag was a promise, not a switch. Enabled
+ * unconditionally in user_profiles_config.h and user_modules_config.h. */
 
 #include "da1458x_stack_config.h"
 #include "user_profiles_config.h"

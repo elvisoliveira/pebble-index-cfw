@@ -8,19 +8,25 @@ A minimal alternative firmware for the **Pebble Index 01** smart ring
 
 ## What it does
 
-It is intentionally *featureless*: a small, working foundation rather than a
-replacement for the official firmware. Out of the box it:
+It is a small, working foundation rather than a replacement for the official
+firmware. Out of the box it:
 
 - Advertises over BLE as **`Pebble Index CFW`**.
 - Counts button presses and exposes the count in its advertising data, so a
   click is visible from any BLE scanner without connecting.
-- Uses a slow advertising interval to keep battery drain low while staying
-  discoverable.
+- Stays silent when idle. The ring sleeps with the radio off and wakes on the
+  button, then advertises in a short, fast burst — a low duty cycle rather than
+  a slow interval.
+- Blinks its RGB LED, one colour at a time: a flash to acknowledge a click, a
+  steady light while recording, another while a clip is being sent.
+- **Records audio** from the ring's microphone while the button is held, up to
+  6.1 seconds, and hands the clip to a phone over BLE.
 - Can hand the ring back to its **failsafe** image with a gesture (five quick
   clicks) or a BLE command. It never touches the failsafe bootloader (see
   [Can it brick?](#can-it-brick)).
 
-That is the whole feature set.
+That is the whole feature set. Everything here is a peripheral the ring already
+has, driven the way its own firmware drives it.
 
 ## How it fits on the ring
 

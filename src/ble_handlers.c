@@ -2,17 +2,14 @@
 
 #include <rwip_config.h>
 
-#if defined(WITH_CTRL_POINT)
 #include <custs1.h>
 #include <custs1_task.h>
 #include <user_custs1_def.h>
 #include <cfw_ctrl.h>
 #include <clip_tx.h>
-#endif
 
 void user_catch_rest_hndl(ke_msg_id_t const msgid, void const *param, ke_task_id_t const dest_id, ke_task_id_t const src_id)
 {
-#if defined(WITH_CTRL_POINT)
     if (msgid == CUSTS1_VAL_WRITE_IND) {
         struct custs1_val_write_ind const *p = (struct custs1_val_write_ind const *)param;
         if (p->handle == SVC1_IDX_CONTROL_POINT_VAL)
@@ -30,8 +27,5 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid, void const *param, ke_task_id
         struct custs1_val_ntf_cfm const *p = (struct custs1_val_ntf_cfm const *)param;
         clip_tx_on_sent(p->handle);
     }
-#else
-    (void)msgid; (void)param;
-#endif
     (void)dest_id; (void)src_id;
 }

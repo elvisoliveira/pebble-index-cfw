@@ -1,7 +1,5 @@
 /* Clip transfer over GATT notifications — see include/clip_tx.h for the protocol. */
 #include <clip_tx.h>
-
-#if defined(WITH_CTRL_POINT)
 #include <mic.h>
 #include <led.h>
 #include <user_custs1_def.h>
@@ -134,4 +132,3 @@ bool clip_tx_busy(void)
 {
     return active;
 }
-#endif // WITH_CTRL_POINT

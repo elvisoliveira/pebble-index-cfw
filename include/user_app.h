@@ -8,7 +8,7 @@ void app_on_init(void);
 
 /* Recovery: invalidate the primary image, then reset -> failsafe. Runtime-read +
  * fail-safe (no-op if nothing validates). Shared by the 5-click gesture, the NMI
- * handler (interrupts.c) and the GATT control point (cfw_ctrl.c, WITH_CTRL_POINT). */
+ * handler (interrupts.c) and the GATT control point (cfw_ctrl.c). */
 void enter_failsafe(void);
 
 /* Burst-from-sleep advertising. Wired in user_callback_config.h.

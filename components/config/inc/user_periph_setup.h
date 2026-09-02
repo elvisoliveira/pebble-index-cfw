@@ -23,6 +23,18 @@ void periph_init(void);
 void por_arm(void);
 
 /*
+ * The POR hold, in units of 4096 RC32K periods — 125 ms each, a 7-bit field, so ~16 s is
+ * the hardware ceiling. 40 puts the reset at ~5 s.
+ *
+ * Public because it is half of a relation the other half of which lives in user_app.c:
+ * the hold that starts a recording must expire well before this, or every hold reboots
+ * the ring instead of recording. That was stated in prose in two files and enforced
+ * nowhere; user_app.c now asserts it.
+ */
+#define POR_HOLD_TICKS 40
+#define POR_HOLD_MS    (POR_HOLD_TICKS * 125)
+
+/*
  * Disarm it. Called when the firmware has PROVEN it saw a button hold — which is the
  * whole trick: a hold means "record" to healthy firmware and "reset" to wedged
  * firmware, and the disarm is what distinguishes them. Nothing else is needed to tell

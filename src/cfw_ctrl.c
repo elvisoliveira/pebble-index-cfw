@@ -1,6 +1,4 @@
 #include <cfw_ctrl.h>
-
-#if defined(WITH_CTRL_POINT)
 #include <user_app.h>   /* enter_failsafe() — shared with the 5-click gesture */
 #include <clip_tx.h>
 #include <mic.h>
@@ -34,4 +32,3 @@ void cfw_ctrl_write(uint8_t conidx, const uint8_t *data, uint16_t len)
         break;
     }
 }
-#endif
