@@ -15,7 +15,8 @@
  *   flash CS/CLK/DO/DI  P0_9/P0_0/P0_6/P0_11    P0_1/P0_4/P0_0/P0_3 (the kit's own AT25XE021A)
  *   flash power pins   P0_4, P0_3 driven       none (those pins ARE the kit's SPI CLK/MISO)
  *                      (P0_3 is really the mic's VCC — see the ring branch below)
- *   RGB LED A/B/C      P0_2/P0_8/P0_10         P0_9/P0_8/P0_6 (J4 "PWM"/"SDA"/"RX")
+ *   RGB LED A/B/C      P0_10/P0_8/P0_2        P0_9/P0_8/P0_6 (J4 "PWM"/"SDA"/"RX")
+ *                      (red/green/blue on both — the ring's order was measured)
  *   microphone in      P0_7                    P0_7 (J3 "CS") — same pin on both
  *   microphone power   P0_3 driven HIGH        none (bench module runs off J3 "3V3")
  *
@@ -108,8 +109,14 @@
     #define FLASH_PWR1_PIN GPIO_PIN_4   /* flash VCC */
     #define FLASH_PWR2_PIN GPIO_PIN_3   /* mic VCC — same pin as MIC_PWR_PIN below */
     /* RGB LED, read out of the stock app v3.74 (FUN_07fc4f20 drives exactly these three
-     * as GPIO, HIGH to light). Which channel is which colour is NOT known: the firmware
-     * only ever speaks in channels. Lighting one at a time on a real ring settles it.
+     * as GPIO, HIGH to light). Which pin is which colour was NOT known from the
+     * firmware — it only ever speaks in channels — and a real ring settled it on
+     * 2026-09-02: P0_10 is RED, P0_8 GREEN, P0_2 BLUE.
+     *
+     * So the assignment below is a mapping from JOB to colour, not a pin order. The
+     * channels mean record / transfer / click (led.h), and the ring wanted red for
+     * recording, so channel A takes P0_10 and channel C takes P0_2 — the reverse of
+     * the first guess, which lit blue while recording on real hardware.
      *
      * ⚠ P0_2 and P0_10 are also the SWD pins, and that is a PCB fact rather than a
      * choice: the flex routes the LED to those pads. The ring's only free pin is P0_5,
@@ -128,9 +135,9 @@
      * exactly what the bench recovery procedures rely on. Accepted 2026-08-31: the
      * LED changes nothing here, and SWD sits behind three recovery nets that do not
      * need it — 5 clicks, the NMI hook, and the boot counter. */
-    #define LED_A_PIN      GPIO_PIN_2   /* ⚠ also SWDIO/SWCLK */
-    #define LED_B_PIN      GPIO_PIN_8
-    #define LED_C_PIN      GPIO_PIN_10  /* ⚠ also SWDIO/SWCLK */
+    #define LED_A_PIN      GPIO_PIN_10  /* RED   — recording.  ⚠ also SWDIO/SWCLK */
+    #define LED_B_PIN      GPIO_PIN_8   /* GREEN — sending a clip */
+    #define LED_C_PIN      GPIO_PIN_2   /* BLUE  — click.     ⚠ also SWDIO/SWCLK */
     /* Microphone: the analog MEMS marked R61E G31H, powered from P0_3 and read on P0_7.
      * The stock app drives P0_3 high, waits 50 us and converts — both numbers read out
      * of app v3.74 (its adc_config template at 0x07fc6b34), and both kept here.

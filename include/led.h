@@ -25,9 +25,11 @@
 #include <stdint.h>
 
 /*
- * What each channel MEANS. Named by job rather than by colour because which channel is
- * which colour on a ring is still unknown — the firmware only ever speaks in channels,
- * and the LED itself is what will answer it. On the kit they are red, green, blue.
+ * What each channel MEANS. Named by job rather than by colour, because the job is the
+ * thing this file gets to decide and the colour is a board fact: which pad carries
+ * which colour differs between the two boards, and on the ring it was unknown until a
+ * real one answered it (2026-09-02 — the first guess had it recording in blue).
+ * board_config.h is where job meets pin. Both boards now land on red / green / blue.
  */
 #define LED_RECORD       (1u << 0)   /* channel A — recording in progress */
 #define LED_TRANSFER     (1u << 1)   /* channel B — sending a clip to the phone */
