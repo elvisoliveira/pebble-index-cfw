@@ -9,9 +9,11 @@
 
 /*
  * One burst. 64 conversions at 64x oversampling is about 4 ms, which spans a couple of
- * cycles of anything above ~250 Hz — enough of a voice to see a peak.
+ * cycles of anything above ~250 Hz — enough of a voice to see a peak, and long enough
+ * to average a resting level out of one. Both callers want that: mic_read reports the
+ * level, mic_capture uses the same burst to find the bias it will subtract.
  *
- * ponytail: this blocks, and its caller is the button ISR. 4 ms there is well inside
+ * ponytail: this blocks, and mic_read's caller is the button ISR. 4 ms there is well inside
  *           what this app already does in that context (enter_failsafe erases a flash
  *           sector), and a level is a once-per-click measurement, not a stream. The
  *           streaming path has no reason to block at all: it is three DMA channels and

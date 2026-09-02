@@ -171,7 +171,10 @@ static volatile bool recording;
  * so the burst-end handler can sleep normally again instead of holding ARCH_SLEEP_OFF
  * until the button happens to come up. A button stuck down used to mean a ring that
  * never sleeps AND a POR that hold_detected already disarmed — both nets gone at once.
- * Not volatile: only task context writes it, and only the button ISR reads it.
+ * Both contexts write it — hold_detected under its guard, the release ISR when it
+ * consumes the gesture — and neither needs volatile: every access is a single read or a
+ * single store, and no loop polls it. That is the whole difference from `recording`
+ * above, which a loop DOES poll and which therefore cannot do without it.
  */
 static bool hold_served;
 
@@ -226,9 +229,17 @@ void user_on_adv_undirect_complete(uint8_t status)
      * LED here unconditionally is what made the recording light go out after BURST_TU:
      * the light was not failing, a three-second timer was ending.
      *
-     * A transfer is the second lit channel that outlives its burst: clicking during one
-     * starts a burst whose end, three seconds later, would darken it mid-send. Same
-     * reason handle_click refuses to blink over it. */
+     * That was observed when a hold only lit the LED and returned. It cannot happen
+     * TODAY: mic_capture blocks this same task context for the whole recording, and the
+     * kernel is cooperative, so no message — this one included — is dispatched while
+     * `recording` is true. Both tests below are therefore dead as written. They stay
+     * because the capture is meant to become UART2 + DMA and stop blocking, which puts
+     * all of this back in play at once; deleting a net for being slack is how it comes
+     * to be missing when the load returns.
+     *
+     * A transfer is the second lit channel that outlives its burst, and that one IS
+     * live: clicking during a send starts a burst whose end, three seconds later, would
+     * darken it mid-send. Same reason handle_click refuses to blink over it. */
     if (!recording && !clip_tx_busy()) {
         led_off();
     }

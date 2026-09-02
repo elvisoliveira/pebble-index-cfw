@@ -22,7 +22,13 @@ void cfw_ctrl_write(uint8_t conidx, const uint8_t *data, uint16_t len)
         clip_tx_start(conidx, (len >= 3) ? (uint16_t)(data[1] | (data[2] << 8)) : 0);
         break;
     case 0x03:
-        mic_fill_ramp();
+        /* Same buffer clip_tx streams from: filling it mid-transfer would rewrite the
+         * bytes in flight AND reset the sample count the transfer's own total was
+         * computed from. The recording path refuses for the same reason; there it is
+         * mic_capture's blocking that makes the check unreachable, here nothing does. */
+        if (!clip_tx_busy()) {
+            mic_fill_ramp();
+        }
         break;
     default:
         break;
