@@ -369,9 +369,8 @@ static void blink(uint8_t channel)
  * Drop into the failsafe by invalidating the primary image, then resetting.
  *
  * The offset is NOT a guess and there is NO product header on this ring: the
- * ring's own firmware translates the Telesto record 0x40060000 to physical 0x5000
- * (FUN_07fc3b48 in the stock app, FUN_07fc2df0 in the failsafe), and a BLE dump of a
- * real ring's flash confirms it byte-for-byte. The boot validates
+ * Telesto record 0x40060000 lands at physical 0x5000, and a BLE dump of a real ring's
+ * flash confirms it byte-for-byte. The boot validates
  * a single image header there — sig 0x7051 + validflag 0xAA at +2 — so clearing
  * that one byte is enough. An earlier version of this hook searched for an
  * AN-B-001 product header (sig 0x7052) at the SDK's 0x38000; that structure does
@@ -387,8 +386,8 @@ static void blink(uint8_t channel)
 #define IMG_SIG1      0x51
 #define IMG_VALID     0xAA
 
-/* SPI-flash pinout lives in board_config.h — read out of the ring's own factory
- * firmware (2026-08-10), remapped to the kit's own AT25XE021A under TARGET_KIT. */
+/* SPI-flash pinout lives in board_config.h, remapped to the kit's own AT25XE021A
+ * under TARGET_KIT. */
 #define FLASH_CHIP_SIZE (256 * 1024)
 
 /* Block-protect bits in the flash status register (SR1). If ANY are set the
@@ -399,7 +398,7 @@ static void blink(uint8_t channel)
 
 /* Failsafe boot-attempt log — physical == Telesto record 0x40060002. The ring's
  * failsafe marks one slot here on every boot and, after 4 uncleared attempts,
- * refuses the primary image and stays in recovery (FUN_07fc3914). 4 KB-aligned,
+ * refuses the primary image and stays in recovery. 4 KB-aligned,
  * so a single sector erase clears it. */
 #define BOOTLOG_ADDR  0x1F000
 
@@ -434,10 +433,9 @@ static void flash_on(void)
     GPIO_ConfigurePin(FLASH_PORT, FLASH_DI_PIN,  INPUT,  PID_SPI_DI,  false);
     spi_flash_configure_env(&flash_dev_cfg);
     spi_initialize(&flash_spi_cfg);
-    /* Wake the flash from deep power-down. The factory app parks it there after
-     * every access (0xB9) and wakes it first (0xAB + ~30 us) — confirmed by tracing
-     * the stock app on the DA14535 kit (FUN_07fc3800 sends 0xAB, FUN_07fc3870 sends
-     * 0xB9). A Telesto PROGRAM+reset is a *software* reset that does NOT power-cycle
+    /* Wake the flash from deep power-down. The ring parks it there after every access
+     * (0xB9) and wakes it first (0xAB plus about 30 us), which was confirmed on the
+     * DA14535 kit. A Telesto PROGRAM+reset is a *software* reset that does NOT power-cycle
      * the chip, so the CFW can inherit a powered-down flash and read only garbage.
      * The SDK's release skips the tRES delay unless UDPD is set, so add it here. */
     spi_flash_release_from_power_down();
@@ -477,8 +475,8 @@ static void flash_off(void)
  * Clear the failsafe boot-attempt log — the CFW's half of the anti-brick contract.
  *
  * The failsafe stamps a slot at BOOTLOG_ADDR on every boot and, after 4 uncleared
- * attempts, refuses the primary image and stays in recovery (FUN_07fc3914). The
- * stock app clears the log once it is up and stable (FUN_07fc510c); a featureless
+ * attempts, refuses the primary image and stays in recovery. The stock app clears the
+ * log once it is up and stable; a featureless
  * CFW that does not do the same self-bricks into the failsafe after 4 boots.
  *
  * Reaching app_on_init means ROM boot, failsafe image validation, SDK init and the

@@ -18,9 +18,8 @@
  *    +---+---+---+---+---+---+---+---+
  *      channels lit       0..31
  *
- * Read out of the stock app v3.74: FUN_07fc4e1c (loader), FUN_07fc4eb8 (step
- * advance), FUN_07fc4f20 (pin driver). Same encoding, so a pattern authored for the
- * ring plays identically here.
+ * This is the ring's own encoding, so a pattern authored for the ring plays
+ * identically here.
  */
 #include <stdint.h>
 
@@ -36,7 +35,7 @@
 #define LED_CLICK        (1u << 2)   /* channel C — a click was counted */
 
 #define LED_CHANNELS     3
-#define LED_PATTERN_MAX  25   /* the ring's own cap (FUN_07fc4e1c rejects >= 26) */
+#define LED_PATTERN_MAX  25   /* the ring's own cap: it rejects 26 and above */
 #define LED_UNIT_MS      50   /* one duration unit */
 
 #define LED_STEP_DUR_MASK  0x1F   /* bits 4:0 — duration, in LED_UNIT_MS units */

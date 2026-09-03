@@ -19,7 +19,7 @@
  * bias drift it exists to follow. */
 #define DC_SHIFT 4
 
-/* Verbatim the ring's own template (app v3.74, 0x07fc6b34) except the attenuator,
+/* Verbatim the ring's own configuration except the attenuator,
  * which is a board difference. Continuous mode is off: the stock app leaves it off too
  * and clocks conversions externally, and here every conversion is asked for. */
 static const adc_config_t mic_cfg = {

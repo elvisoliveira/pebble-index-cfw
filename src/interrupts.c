@@ -3,7 +3,7 @@
  * bootloader instead of hanging forever.
  *
  * Why this exists. The boot only validates the image header and jumps — there is no
- * watchdog-fallback and no boot-attempt counter (Ghidra). So a CRC-valid image that
+ * watchdog-fallback and no boot-attempt counter. So a CRC-valid image that
  * hangs, or that faults before ble_init, never falls through to the failsafe and never
  * raises BLE: SWD would be the only way back. Routing the watchdog's NMI into
  * enter_failsafe() converts that dead end into a recoverable state — the validflag is
