@@ -29,7 +29,7 @@ static uint8_t led_mask;
 
 /* Drive the three channels from a 3-bit mask (bit0 = channel A).
  *
- * "Off" is INPUT, not OUTPUT-low, exactly as the ring does it (FUN_07fc4f20): a
+ * "Off" is INPUT, not OUTPUT-low, exactly as the ring does it: a
  * high-Z pad neither leaks through the LED nor fights it.
  *
  * A pad's HIGH level is VBAT_HIGH, so how bright a channel gets is a rail question,

@@ -20,8 +20,8 @@
  *   microphone in      P0_7                    P0_7 (J3 "CS") — same pin on both
  *   microphone power   P0_3 driven HIGH        none (bench module runs off J3 "3V3")
  *
- * The pin numbers were read out of the ring's own factory firmware (2026-08-10), not
- * guessed. DC-DC is NOT here: periph_init auto-detects buck->boost, same code both boards.
+ * The pin numbers are the ring's own, not guesses. DC-DC is NOT here: periph_init
+ * auto-detects buck->boost, same code both boards.
  */
 #include <gpio.h>
 
@@ -121,9 +121,9 @@
     #define FLASH_HAS_PWR_PINS
     #define FLASH_PWR1_PIN GPIO_PIN_4   /* flash VCC */
     #define FLASH_PWR2_PIN GPIO_PIN_3   /* mic VCC — same pin as MIC_PWR_PIN below */
-    /* RGB LED, read out of the stock app v3.74 (FUN_07fc4f20 drives exactly these three
-     * as GPIO, HIGH to light). Which pin is which colour was NOT known from the
-     * firmware — it only ever speaks in channels — and a real ring settled it on
+    /* RGB LED: these three pins, plain GPIO, HIGH to light. Which pin is which colour
+     * was NOT known up front, since the firmware only ever speaks in channels, and a
+     * real ring settled it on
      * 2026-09-02: P0_10 is RED, P0_8 GREEN, P0_2 BLUE.
      *
      * So the assignment below is a mapping from JOB to colour, not a pin order. The
@@ -152,8 +152,8 @@
     #define LED_B_PIN      GPIO_PIN_8   /* GREEN — sending a clip */
     #define LED_C_PIN      GPIO_PIN_2   /* BLUE  — click.     ⚠ also SWDIO/SWCLK */
     /* Microphone: the analog MEMS marked R61E G31H, powered from P0_3 and read on P0_7.
-     * The stock app drives P0_3 high, waits 50 us and converts — both numbers read out
-     * of app v3.74 (its adc_config template at 0x07fc6b34), and both kept here.
+     * The stock app drives P0_3 high, waits 50 us and converts. Both numbers are the
+     * ring's own and both are kept here.
      *
      * 2x, byte-identical to the stock config now — and getting here took a wrong turn
      * worth writing down.
@@ -185,7 +185,7 @@
      * And then some. The 50 us above is what the stock app waits between raising P0_3
      * and moving on — but it does not sample there. It erases a 4 KB flash sector next
      * and busy-waits on a millisecond clock until 150 ms have passed since power-up,
-     * and only THEN loads the ADC config and starts converting (FUN_07fc5bd8).
+     * and only THEN loads the ADC config and starts converting.
      *
      * Read the intent honestly: those 150 ms are nominally waiting for the erase, not
      * for the microphone. What is not in doubt is the empirical fact of the working
